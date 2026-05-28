@@ -1,0 +1,85 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Body,
+  UseGuards,
+  Req,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { SessionAuthGuard } from '../common/guards/session-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { SignupDto } from './dto/signup.dto';
+import { LoginDto } from './dto/login.dto';
+import { GoogleSessionDto } from './dto/google-session.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { GuestLoginDto } from './dto/guest-login.dto';
+
+@Controller('auth')
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
+
+  @Get('options')
+  getOptions() {
+    return this.authService.getAuthOptions();
+  }
+
+  @Post('email/signup')
+  async emailSignup(@Body() dto: SignupDto) {
+    return this.authService.emailSignup(dto);
+  }
+
+  @Post('email/login')
+  @HttpCode(HttpStatus.OK)
+  async emailLogin(@Body() dto: LoginDto) {
+    return this.authService.emailLogin(dto);
+  }
+
+  @Post('google/session')
+  @HttpCode(HttpStatus.OK)
+  async googleSession(@Body() dto: GoogleSessionDto) {
+    return this.authService.googleSession(dto);
+  }
+
+  @Post('guest')
+  @HttpCode(HttpStatus.OK)
+  async guestLogin(@Body() dto: GuestLoginDto) {
+    return this.authService.guestLogin(dto.user_id);
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
+  }
+
+  @Get('me')
+  @UseGuards(SessionAuthGuard)
+  async getMe(@CurrentUser() user: any) {
+    return this.authService.getMe(user);
+  }
+
+  @Put('me')
+  @UseGuards(SessionAuthGuard)
+  async updateMe(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateMe(user, dto);
+  }
+
+  @Post('logout')
+  @UseGuards(SessionAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async logout(@Req() req: any) {
+    return this.authService.logout(req.session_token);
+  }
+}

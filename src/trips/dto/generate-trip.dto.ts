@@ -1,0 +1,41 @@
+import {
+  IsString,
+  IsNumber,
+  IsArray,
+  IsOptional,
+  IsIn,
+  Min,
+  Max,
+  ArrayMinSize,
+} from 'class-validator';
+
+export class GenerateTripDto {
+  @IsString()
+  destination: string;
+
+  @IsNumber()
+  @Min(1)
+  @Max(30)
+  duration_days: number;
+
+  @IsString()
+  @IsIn(['tranquille', 'equilibre', 'intensif'])
+  pace: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  transports: string[];
+
+  @IsString()
+  @IsIn(['economique', 'moyen', 'luxe'])
+  budget: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMinSize(1)
+  interests: string[];
+
+  @IsOptional()
+  @IsString()
+  start_date?: string;
+}

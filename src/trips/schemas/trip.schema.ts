@@ -1,0 +1,70 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+export type TripDocument = Trip & Document;
+
+export class POI {
+  name: string;
+  description: string;
+  lat: number;
+  lng: number;
+  day: number;
+  order: number;
+  duration_minutes: number;
+  category: string;
+  image_query: string;
+  image_url: string | null;
+}
+
+export class DayWeather {
+  date: string;
+  weather_code: number;
+  temp_max: number;
+  temp_min: number;
+  icon: string;
+  summary: string;
+}
+
+@Schema({ collection: 'trips' })
+export class Trip {
+  @Prop({ required: true, unique: true })
+  id: string;
+
+  @Prop({ required: true })
+  user_id: string;
+
+  @Prop({ required: true })
+  destination: string;
+
+  @Prop({ required: true })
+  duration_days: number;
+
+  @Prop({ required: true })
+  pace: string;
+
+  @Prop({ type: [String], default: [] })
+  transports: string[];
+
+  @Prop({ required: true })
+  budget: string;
+
+  @Prop({ type: [String], default: [] })
+  interests: string[];
+
+  @Prop({ type: [Object], default: [] })
+  pois: POI[];
+
+  @Prop({ type: [Object], default: [] })
+  weather: DayWeather[];
+
+  @Prop({ default: true })
+  is_public: boolean;
+
+  @Prop({ default: 0 })
+  likes: number;
+
+  @Prop({ default: Date.now })
+  created_at: Date;
+}
+
+export const TripSchema = SchemaFactory.createForClass(Trip);
