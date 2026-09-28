@@ -25,3 +25,8 @@ export class PasswordReset {
 }
 
 export const PasswordResetSchema = SchemaFactory.createForClass(PasswordReset);
+
+// Explicit Indexes
+PasswordResetSchema.index({ email: 1 });
+PasswordResetSchema.index({ user_id: 1 });
+PasswordResetSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });

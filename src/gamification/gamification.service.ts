@@ -12,11 +12,13 @@ const XP_ACTIONS: Record<string, number> = {
 
 const ONE_TIME_ACTIONS = ['first_swipe'];
 
+import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+
 @Injectable()
 export class GamificationService {
   constructor(
-    @InjectModel(Profile.name) private readonly profileModel: Model<ProfileDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
+    @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
   ) {}
 
   async getProfile(user_id: string): Promise<object> {

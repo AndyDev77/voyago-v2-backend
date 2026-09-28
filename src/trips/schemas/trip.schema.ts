@@ -27,8 +27,11 @@ export class DayWeather {
 
 @Schema({ collection: 'trips' })
 export class Trip {
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true })
   id: string;
+
+  @Prop({ default: 'default' })
+  tenant_id: string;
 
   @Prop({ required: true })
   user_id: string;
@@ -68,3 +71,12 @@ export class Trip {
 }
 
 export const TripSchema = SchemaFactory.createForClass(Trip);
+
+// Explicit Indexes
+TripSchema.index({ id: 1 }, { unique: true });
+TripSchema.index({ tenant_id: 1 });
+TripSchema.index({ user_id: 1 });
+TripSchema.index({ user_id: 1, tenant_id: 1 });
+TripSchema.index({ is_public: 1, created_at: -1 });
+TripSchema.index({ tenant_id: 1, is_public: 1, created_at: -1 });
+TripSchema.index({ destination: 1 });

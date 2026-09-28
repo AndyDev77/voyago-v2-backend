@@ -61,14 +61,16 @@ const TIERS = [
   },
 ];
 
+import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+
 @Injectable()
 export class ProService {
   private stripe: Stripe;
 
   constructor(
-    @InjectModel(PaymentTransaction.name) private readonly transactionModel: Model<PaymentTransactionDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    @InjectModel(Profile.name) private readonly profileModel: Model<ProfileDocument>,
+    @InjectModel(PaymentTransaction.name, GLOBAL_DB_CONNECTION) private readonly transactionModel: Model<PaymentTransactionDocument>,
+    @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
     private readonly configService: ConfigService,
   ) {
     const stripeKey = this.configService.get<string>('STRIPE_SECRET_KEY');

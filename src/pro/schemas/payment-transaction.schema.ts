@@ -5,7 +5,7 @@ export type PaymentTransactionDocument = PaymentTransaction & Document;
 
 @Schema({ collection: 'payment_transactions' })
 export class PaymentTransaction {
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true })
   session_id: string;
 
   @Prop({ required: true })
@@ -40,3 +40,9 @@ export class PaymentTransaction {
 }
 
 export const PaymentTransactionSchema = SchemaFactory.createForClass(PaymentTransaction);
+
+// Explicit Indexes
+PaymentTransactionSchema.index({ session_id: 1 }, { unique: true });
+PaymentTransactionSchema.index({ user_id: 1 });
+PaymentTransactionSchema.index({ status: 1 });
+PaymentTransactionSchema.index({ created_at: -1 });

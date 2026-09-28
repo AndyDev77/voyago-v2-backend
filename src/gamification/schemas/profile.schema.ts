@@ -5,8 +5,11 @@ export type ProfileDocument = Profile & Document;
 
 @Schema({ collection: 'profiles' })
 export class Profile {
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true })
   user_id: string;
+
+  @Prop({ default: 'default' })
+  tenant_id: string;
 
   @Prop({ default: 0 })
   xp: number;
@@ -28,3 +31,10 @@ export class Profile {
 }
 
 export const ProfileSchema = SchemaFactory.createForClass(Profile);
+
+// Explicit Indexes
+ProfileSchema.index({ user_id: 1 }, { unique: true });
+ProfileSchema.index({ tenant_id: 1 });
+ProfileSchema.index({ user_id: 1, tenant_id: 1 });
+ProfileSchema.index({ xp: -1 });
+ProfileSchema.index({ level: -1 });

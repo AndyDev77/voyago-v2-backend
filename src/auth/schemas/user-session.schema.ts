@@ -8,7 +8,7 @@ export class UserSession {
   @Prop({ required: true })
   user_id: string;
 
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true })
   session_token: string;
 
   @Prop({ required: true })
@@ -19,3 +19,8 @@ export class UserSession {
 }
 
 export const UserSessionSchema = SchemaFactory.createForClass(UserSession);
+
+// Explicit Indexes
+UserSessionSchema.index({ session_token: 1 }, { unique: true });
+UserSessionSchema.index({ user_id: 1 });
+UserSessionSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });

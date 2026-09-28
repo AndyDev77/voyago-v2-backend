@@ -46,26 +46,27 @@
 
 ---
 
-## 🏗 Architecture
+## 🏗 Architecture Multi-Tenant
 
 ```
 src/
-├── auth/           # Authentification (email, Google OAuth, guest)
-├── trips/          # Génération d'itinéraires avec Claude AI
-├── community/      # Feed public & profils utilisateurs
+├── tenancy/        # Isolation multi-tenant (Middleware, TenancyService, Dynamic DB pool)
+├── ai/             # Service IA haute performance (Gemini 2.0/1.5 Flash + Claude + Wikipedia + Open-Meteo)
+├── auth/           # Authentification & sessions sécurisées
+├── trips/          # Génération d'itinéraires IA & persistance tenant-aware
+├── community/      # Feed public & profils communautaires
 ├── gamification/   # XP, niveaux, badges
-├── pro/            # Abonnements Stripe
-├── webhooks/       # Stripe webhooks
-├── interests/      # Catégories d'intérêts & health check
-└── common/         # Guards, décorateurs partagés
+├── pro/            # Abonnements Stripe & offres Pro
+├── webhooks/       # Webhooks Stripe bruts
+├── interests/      # Catalogue d'intérêts & health check
+└── common/         # Guards, décorateurs, constantes multi-tenant
 ```
 
-### Authentification
-
-Tokens de session 48 caractères aléatoires stockés en MongoDB (pas JWT).
-Header requis : `Authorization: Bearer <token>`
-
-3 providers : `email` | `google` | `guest`
+### Multi-Tenancy
+- **Isolation de données** : Résolution du `tenant_id` via header `x-tenant-id`, session token ou query param.
+- **Connexions dynamiques** : `TenancyService` instancie et met en cache les pools de connexions MongoDB par tenant.
+- **Connexion Globale** (`MONGO_URI_GLOBAL`) : Utilisateurs, Authentification, Catalogue, Badges, Abonnements.
+- **Connexion Tenant** (`MONGO_URI_TENANT`) : Voyages, Profils personnalisés, Préférences.
 
 ---
 
@@ -74,7 +75,7 @@ Header requis : `Authorization: Bearer <token>`
 ### Prérequis
 - Node.js 20+
 - MongoDB local ou Atlas
-- Clés API : Anthropic, Resend, Stripe
+- Clés API (Gemini / Anthropic, Resend, Stripe)
 
 ### Étapes
 
@@ -88,7 +89,6 @@ npm install
 
 # Configurer les variables d'environnement
 cp .env.example .env
-# Éditer .env avec vos clés
 
 # Lancer en développement
 npm run start:dev
@@ -98,28 +98,43 @@ npm run build
 npm run start:prod
 ```
 
-Le serveur démarre sur `http://localhost:8001`
+Le serveur démarre sur `http://localhost:3333/api`  
+Documentation interactive Swagger disponible sur `http://localhost:3333/api/docs`
 
 ---
 
-## 🔑 Variables d'environnement
+## 🔑 Variables d'environnement (`.env`)
 
 ```env
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=voyago_db
+# --- SERVEUR & RÉSEAU ---
+PORT=3333
+APP_BASE_URL=http://localhost:3333
 
-# Anthropic (https://console.anthropic.com)
-ANTHROPIC_API_KEY=sk-ant-...
+# --- BASES DE DONNÉES MULTI-TENANT (MongoDB Atlas ou Local) ---
+MONGO_URI_GLOBAL=mongodb+srv://<username>:<password>@cluster0.x0soqqd.mongodb.net/voyago_global?retryWrites=true&w=majority
+MONGO_URI_TENANT=mongodb+srv://<username>:<password>@cluster0.x0soqqd.mongodb.net/voyago_tenants?retryWrites=true&w=majority
+# Fallback local (optionnel) :
+# MONGO_URL=mongodb://localhost:27017
+# DB_NAME=voyago_db
 
-# Resend (https://resend.com)
-RESEND_API_KEY=re_...
+# --- AUTHENTIFICATION & SÉCURITÉ ---
+JWT_SECRET=dev_secret_key_change_in_prod
+GOOGLE_CLIENT_ID=placeholder_google_id
 
-# Stripe (https://dashboard.stripe.com)
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
+# --- MOTEURS IA (Génération d'Itinéraires & POIs) ---
+GEMINI_API_KEY=your_gemini_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
 
-APP_BASE_URL=http://localhost:8001
-PORT=8001
+# --- STOCKAGE MÉDIAS (UploadThing) ---
+UPLOADTHING_SECRET=your_uploadthing_secret
+UPLOADTHING_APP_ID=your_uploadthing_app_id
+
+# --- EMAILS TRANSACTIONNELS (Resend) ---
+RESEND_API_KEY=re_your_resend_api_key
+
+# --- PAIEMENTS & ABONNEMENTS (Stripe) ---
+STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
+STRIPE_WEBHOOK_SECRET=whsec_your_stripe_webhook_secret
 ```
 
 ---
@@ -131,6 +146,7 @@ PORT=8001
 | Méthode | Route | Description |
 |---|---|---|
 | GET | `/api/` | Health check |
+| GET | `/api/docs` | Documentation Swagger / OpenAPI |
 | GET | `/api/interests` | 10 catégories d'intérêts |
 | GET | `/api/badges` | Catalogue des badges |
 | GET | `/api/auth/options` | Pays & emojis avatars |
@@ -148,14 +164,14 @@ PORT=8001
 | GET | `/api/xp/rewards` | Système XP |
 | POST | `/api/webhooks/stripe` | Webhook Stripe |
 
-### Authentifiés (Bearer token)
+### Authentifiés (Bearer token & x-tenant-id)
 
 | Méthode | Route | Description |
 |---|---|---|
 | GET | `/api/auth/me` | Utilisateur connecté |
 | PUT | `/api/auth/me` | Modifier profil |
 | POST | `/api/auth/logout` | Déconnexion |
-| POST | `/api/trips/generate` | Générer itinéraire IA |
+| POST | `/api/trips/generate` | Générer itinéraire IA (Gemini / Claude) |
 | POST | `/api/profile/xp` | Attribuer XP |
 | POST | `/api/pro/checkout` | Créer session Stripe |
 | GET | `/api/pro/status/:session_id` | Statut paiement |
@@ -166,12 +182,12 @@ PORT=8001
 ## 📦 Modules
 
 ### Trips — Génération IA
-1. Vérifie limite freemium (3 voyages/mois → 402 si dépassé)
-2. Appelle **Claude Sonnet 4.5** pour générer les POIs avec coordonnées GPS
+1. Vérifie limite freemium (3 voyages/mois → 402 si dépassé pour les non-pro)
+2. Appelle **Gemini 2.0/1.5 Flash** (ou **Claude Sonnet 4.5**) pour générer les POIs avec coordonnées GPS précises
 3. Récupère les images **Wikipedia** en parallèle
 4. Récupère la **météo Open-Meteo** (16 jours)
 5. Attribue **50 XP** et vérifie les badges
-6. Sauvegarde en MongoDB
+6. Sauvegarde en MongoDB avec contexte de partitionnement `tenant_id`
 
 ### Gamification
 - XP : 50 pts/voyage, 10 pts/premier swipe
@@ -188,10 +204,13 @@ PORT=8001
 
 ```bash
 # Health check
-curl http://localhost:8001/api/
+curl http://localhost:3333/api/
+
+# Swagger documentation
+# Ouvrir http://localhost:3333/api/docs dans le navigateur
 
 # Inscription
-curl -X POST http://localhost:8001/api/auth/email/signup \
+curl -X POST http://localhost:3333/api/auth/email/signup \
   -H "Content-Type: application/json" \
   -d '{"email":"test@test.com","password":"pass123","name":"Test"}'
 ```

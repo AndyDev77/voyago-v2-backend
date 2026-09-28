@@ -1,46 +1,110 @@
+import * as dns from 'node:dns';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import helmet from 'helmet';
 import * as express from 'express';
 
+// Ensure DNS resolvers handle SRV records reliably for Atlas
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
+} catch {
+  // Ignore if cannot set servers
+}
+
 async function bootstrap() {
+  const logger = new Logger('VoyagoBootstrap');
+
   const app = await NestFactory.create(AppModule, {
     bodyParser: false,
+    cors: false, // Handled explicitly below
   });
 
-  // Raw body middleware for Stripe webhooks — must be registered before JSON parser
+  // 1. Security Headers via Helmet (with cross-origin policy for mobile & web apps)
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      contentSecurityPolicy: false, // Allows Swagger UI & external images
+    }),
+  );
+
+  // 2. Stripe Webhook Raw Body Parser (must be before standard JSON body parser)
   app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 
-  // JSON body parser for all other routes
+  // 3. JSON & URL-Encoded Body Parsers with 50MB payload limits
   app.use((req, res, next) => {
     if (req.path === '/api/webhooks/stripe') {
       return next();
     }
-    express.json()(req, res, next);
+    express.json({ limit: '50mb' })(req, res, next);
   });
 
   app.use((req, res, next) => {
     if (req.path === '/api/webhooks/stripe') {
       return next();
     }
-    express.urlencoded({ extended: true })(req, res, next);
+    express.urlencoded({ extended: true, limit: '50mb' })(req, res, next);
   });
 
+  // 4. Global API Prefix
   app.setGlobalPrefix('api');
 
-  app.enableCors({ origin: '*' });
+  // 5. Enhanced Multi-Platform CORS
+  app.enableCors({
+    origin: (origin, callback) => {
+      // Allow all origins including mobile apps, localhost, emulators
+      callback(null, true);
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+      'Origin',
+      'X-Requested-With',
+      'Content-Type',
+      'Accept',
+      'Authorization',
+      'x-tenant-id',
+    ],
+    credentials: true,
+  });
 
+  // 6. Global Validation & Transformation Pipe
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: false,
       transform: true,
+      transformOptions: { enableImplicitConversion: true },
     }),
   );
 
-  const port = process.env.PORT || 8001;
+  // 7. Swagger / OpenAPI Documentation
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('🦜 Voyago API — Multi-Tenant Backend')
+    .setDescription('REST API for Voyago Gamified Travel Planner with AI, Multi-Tenancy, and Gamification')
+    .setVersion('2.0.0')
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'Token',
+      name: 'Authorization',
+      description: 'Enter your 48-character Voyago session token',
+      in: 'header',
+    })
+    .addApiKey({ type: 'apiKey', name: 'x-tenant-id', in: 'header' }, 'x-tenant-id')
+    .build();
+
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api/docs', app, document, {
+    customSiteTitle: '🦜 Voyago API Docs',
+  });
+
+  // 8. Port Configuration (Port 3333 default)
+  const port = parseInt(process.env.PORT || '3333', 10);
   await app.listen(port);
-  console.log(`Voyago API running on port ${port}`);
+
+  logger.log(`🦜 Voyago Multi-Tenant API running on http://localhost:${port}/api`);
+  logger.log(`📚 Swagger Documentation available on http://localhost:${port}/api/docs`);
 }
 
 bootstrap();

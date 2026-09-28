@@ -5,13 +5,16 @@ export type UserDocument = User & Document;
 
 @Schema({ collection: 'users' })
 export class User {
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true })
   user_id: string;
+
+  @Prop({ default: 'default' })
+  tenant_id: string;
 
   @Prop({ required: true, enum: ['email', 'google', 'guest'] })
   auth_provider: string;
 
-  @Prop({ sparse: true })
+  @Prop()
   email: string;
 
   @Prop({ required: true })
@@ -52,3 +55,11 @@ export class User {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+// Explicit Indexes
+UserSchema.index({ user_id: 1 }, { unique: true });
+UserSchema.index({ email: 1 }, { sparse: true, unique: true });
+UserSchema.index({ tenant_id: 1 });
+UserSchema.index({ user_id: 1, tenant_id: 1 });
+UserSchema.index({ auth_provider: 1 });
+UserSchema.index({ created_at: -1 });

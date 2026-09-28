@@ -8,12 +8,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { UserSession } from '../../auth/schemas/user-session.schema';
 import { User } from '../../auth/schemas/user.schema';
+import { GLOBAL_DB_CONNECTION } from '../constants';
 
 @Injectable()
 export class SessionAuthGuard implements CanActivate {
   constructor(
-    @InjectModel(UserSession.name) private readonly sessionModel: Model<UserSession>,
-    @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(UserSession.name, GLOBAL_DB_CONNECTION) private readonly sessionModel: Model<UserSession>,
+    @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<User>,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -44,6 +45,13 @@ export class SessionAuthGuard implements CanActivate {
       throw new UnauthorizedException('User not found');
     }
 
+    const tenantId =
+      request.headers['x-tenant-id']?.toString() ||
+      user.tenant_id ||
+      'default';
+
+    user.tenant_id = tenantId;
+    request.tenantId = tenantId;
     request.user = user;
     request.session_token = token;
     return true;

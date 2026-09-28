@@ -5,12 +5,14 @@ import { Trip, TripDocument } from '../trips/schemas/trip.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
 import { Profile, ProfileDocument } from '../gamification/schemas/profile.schema';
 
+import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+
 @Injectable()
 export class CommunityService {
   constructor(
-    @InjectModel(Trip.name) private readonly tripModel: Model<TripDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    @InjectModel(Profile.name) private readonly profileModel: Model<ProfileDocument>,
+    @InjectModel(Trip.name, TENANT_DB_CONNECTION) private readonly tripModel: Model<TripDocument>,
+    @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
   ) {}
 
   async getPublicFeed(): Promise<object[]> {

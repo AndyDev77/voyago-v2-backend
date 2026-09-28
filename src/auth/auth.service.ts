@@ -27,15 +27,17 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
+import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+
 @Injectable()
 export class AuthService {
   private resend: Resend;
 
   constructor(
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    @InjectModel(UserSession.name) private readonly sessionModel: Model<UserSessionDocument>,
-    @InjectModel(PasswordReset.name) private readonly passwordResetModel: Model<PasswordResetDocument>,
-    @InjectModel(Profile.name) private readonly profileModel: Model<ProfileDocument>,
+    @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
+    @InjectModel(UserSession.name, GLOBAL_DB_CONNECTION) private readonly sessionModel: Model<UserSessionDocument>,
+    @InjectModel(PasswordReset.name, GLOBAL_DB_CONNECTION) private readonly passwordResetModel: Model<PasswordResetDocument>,
+    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
     private readonly configService: ConfigService,
   ) {
     const resendKey = this.configService.get<string>('RESEND_API_KEY');
@@ -62,11 +64,12 @@ export class AuthService {
     return token;
   }
 
-  private async createProfile(user_id: string): Promise<void> {
+  private async createProfile(user_id: string, tenant_id: string = 'default'): Promise<void> {
     const existing = await this.profileModel.findOne({ user_id }).exec();
     if (!existing) {
       await this.profileModel.create({
         user_id,
+        tenant_id,
         xp: 0,
         level: 1,
         streak: 0,
