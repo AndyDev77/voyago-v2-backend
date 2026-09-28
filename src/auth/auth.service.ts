@@ -5,6 +5,7 @@ import {
   ConflictException,
   NotFoundException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -18,7 +19,7 @@ import { Resend } from 'resend';
 import { User, UserDocument } from './schemas/user.schema';
 import { UserSession, UserSessionDocument } from './schemas/user-session.schema';
 import { PasswordReset, PasswordResetDocument } from './schemas/password-reset.schema';
-import { Profile, ProfileDocument } from '../gamification/schemas/profile.schema';
+import { ProfileSchema } from '../gamification/schemas/profile.schema';
 
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
@@ -27,17 +28,19 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
-import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+import { GLOBAL_DB_CONNECTION } from '../common/constants';
+import { TenancyService } from '../tenancy/tenancy.service';
 
 @Injectable()
 export class AuthService {
   private resend: Resend;
+  private readonly logger = new Logger(AuthService.name);
 
   constructor(
     @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
     @InjectModel(UserSession.name, GLOBAL_DB_CONNECTION) private readonly sessionModel: Model<UserSessionDocument>,
     @InjectModel(PasswordReset.name, GLOBAL_DB_CONNECTION) private readonly passwordResetModel: Model<PasswordResetDocument>,
-    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
+    private readonly tenancyService: TenancyService,
     private readonly configService: ConfigService,
   ) {
     const resendKey = this.configService.get<string>('RESEND_API_KEY');
@@ -64,19 +67,33 @@ export class AuthService {
     return token;
   }
 
-  private async createProfile(user_id: string, tenant_id: string = 'default'): Promise<void> {
-    const existing = await this.profileModel.findOne({ user_id }).exec();
-    if (!existing) {
-      await this.profileModel.create({
+  /**
+   * Creates a profile in the user's own tenant database (tenant_<user_id>).
+   */
+  private async createProfile(user_id: string): Promise<void> {
+    try {
+      const ProfileModel = await this.tenancyService.getTenantModel(
         user_id,
-        tenant_id,
-        xp: 0,
-        level: 1,
-        streak: 0,
-        badges: [],
-        trips_count: 0,
-        last_active: new Date(),
-      });
+        'Profile',
+        ProfileSchema,
+      );
+
+      const existing = await ProfileModel.findOne({ user_id }).exec();
+      if (!existing) {
+        await ProfileModel.create({
+          user_id,
+          tenant_id: user_id,
+          xp: 0,
+          level: 1,
+          streak: 0,
+          badges: [],
+          trips_count: 0,
+          last_active: new Date(),
+        });
+        this.logger.log(`Profile created in tenant DB for user: ${user_id}`);
+      }
+    } catch (err) {
+      this.logger.error(`Failed to create profile for ${user_id}: ${err}`);
     }
   }
 
@@ -88,7 +105,7 @@ export class AuthService {
     return obj;
   }
 
-  async emailSignup(dto: SignupDto): Promise<{ session_token: string; user_id: string; user: object }> {
+  async emailSignup(dto: SignupDto): Promise<{ session_token: string; user_id: string; tenant_id: string; user: object }> {
     const existing = await this.userModel.findOne({ email: dto.email.toLowerCase() }).exec();
     if (existing) {
       throw new ConflictException('Email already registered');
@@ -97,7 +114,6 @@ export class AuthService {
     const password_hash = await bcrypt.hash(dto.password, 12);
     const user_id = 'user_' + uuidv4();
 
-    // If there's a guest_user_id, migrate guest trips (handled by trips service if needed)
     const user = await this.userModel.create({
       user_id,
       auth_provider: 'email',
@@ -109,6 +125,7 @@ export class AuthService {
       country: dto.country || null,
       city: dto.city || null,
       password_hash,
+      tenant_id: user_id,
       is_pro: false,
       pro_tier: null,
       pro_expires_at: null,
@@ -118,10 +135,10 @@ export class AuthService {
     await this.createProfile(user_id);
     const session_token = await this.createSession(user_id);
 
-    return { session_token, user_id, user: this.sanitizeUser(user) };
+    return { session_token, user_id, tenant_id: user_id, user: this.sanitizeUser(user) };
   }
 
-  async emailLogin(dto: LoginDto): Promise<{ session_token: string; user_id: string; user: object }> {
+  async emailLogin(dto: LoginDto): Promise<{ session_token: string; user_id: string; tenant_id: string; user: object }> {
     const user = await this.userModel.findOne({ email: dto.email.toLowerCase() }).exec();
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
@@ -136,11 +153,20 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // Ensure tenant_id is set on the user record
+    if (!user.tenant_id || user.tenant_id === 'default') {
+      await this.userModel.updateOne({ user_id: user.user_id }, { $set: { tenant_id: user.user_id } }).exec();
+      user.tenant_id = user.user_id;
+    }
+
+    // Ensure profile exists in tenant DB
+    await this.createProfile(user.user_id);
+
     const session_token = await this.createSession(user.user_id);
-    return { session_token, user_id: user.user_id, user: this.sanitizeUser(user) };
+    return { session_token, user_id: user.user_id, tenant_id: user.user_id, user: this.sanitizeUser(user) };
   }
 
-  async googleSession(dto: GoogleSessionDto): Promise<{ session_token: string; user_id: string; user: object }> {
+  async googleSession(dto: GoogleSessionDto): Promise<{ session_token: string; user_id: string; tenant_id: string; user: object }> {
     let oauthData: any;
 
     try {
@@ -171,6 +197,7 @@ export class AuthService {
         email: email.toLowerCase(),
         name,
         picture,
+        tenant_id: user_id,
         is_pro: false,
         pro_tier: null,
         pro_expires_at: null,
@@ -183,13 +210,20 @@ export class AuthService {
         await this.userModel.updateOne({ user_id: user.user_id }, { $set: { picture } }).exec();
         user.picture = picture;
       }
+      // Ensure tenant_id is set
+      if (!user.tenant_id || user.tenant_id === 'default') {
+        await this.userModel.updateOne({ user_id: user.user_id }, { $set: { tenant_id: user.user_id } }).exec();
+        user.tenant_id = user.user_id;
+      }
+      // Ensure profile exists
+      await this.createProfile(user.user_id);
     }
 
     const session_token = await this.createSession(user.user_id);
-    return { session_token, user_id: user.user_id, user: this.sanitizeUser(user) };
+    return { session_token, user_id: user.user_id, tenant_id: user.user_id, user: this.sanitizeUser(user) };
   }
 
-  async guestLogin(guest_user_id: string): Promise<{ session_token: string; user_id: string; user: object }> {
+  async guestLogin(guest_user_id: string): Promise<{ session_token: string; user_id: string; tenant_id: string; user: object }> {
     if (!guest_user_id.startsWith('guest_')) {
       throw new BadRequestException('Invalid guest user_id format');
     }
@@ -201,16 +235,23 @@ export class AuthService {
         user_id: guest_user_id,
         auth_provider: 'guest',
         name: 'Guest',
+        tenant_id: guest_user_id,
         is_pro: false,
         pro_tier: null,
         pro_expires_at: null,
         created_at: new Date(),
       });
       await this.createProfile(guest_user_id);
+    } else {
+      // Ensure tenant_id is set
+      if (!user.tenant_id || user.tenant_id === 'default') {
+        await this.userModel.updateOne({ user_id: user.user_id }, { $set: { tenant_id: user.user_id } }).exec();
+        user.tenant_id = user.user_id;
+      }
     }
 
     const session_token = await this.createSession(user.user_id);
-    return { session_token, user_id: user.user_id, user: this.sanitizeUser(user) };
+    return { session_token, user_id: user.user_id, tenant_id: guest_user_id, user: this.sanitizeUser(user) };
   }
 
   async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {

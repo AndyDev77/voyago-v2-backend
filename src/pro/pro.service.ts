@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -11,7 +12,8 @@ import Stripe from 'stripe';
 
 import { PaymentTransaction, PaymentTransactionDocument } from './schemas/payment-transaction.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
-import { Profile, ProfileDocument } from '../gamification/schemas/profile.schema';
+import { ProfileSchema } from '../gamification/schemas/profile.schema';
+import { TenancyService } from '../tenancy/tenancy.service';
 
 const TIERS = [
   {
@@ -61,16 +63,17 @@ const TIERS = [
   },
 ];
 
-import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+import { GLOBAL_DB_CONNECTION } from '../common/constants';
 
 @Injectable()
 export class ProService {
   private stripe: Stripe;
+  private readonly logger = new Logger(ProService.name);
 
   constructor(
     @InjectModel(PaymentTransaction.name, GLOBAL_DB_CONNECTION) private readonly transactionModel: Model<PaymentTransactionDocument>,
     @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
-    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
+    private readonly tenancyService: TenancyService,
     private readonly configService: ConfigService,
   ) {
     const stripeKey = this.configService.get<string>('STRIPE_SECRET_KEY');
@@ -211,11 +214,20 @@ export class ProService {
       },
     ).exec();
 
-    // Award voyago_pro badge
-    await this.profileModel.updateOne(
-      { user_id },
-      { $addToSet: { badges: 'voyago_pro' } },
-    ).exec();
+    // Award voyago_pro badge in user's tenant DB
+    try {
+      const ProfileModel = await this.tenancyService.getTenantModel<any>(
+        user_id,
+        'Profile',
+        ProfileSchema,
+      );
+      await ProfileModel.updateOne(
+        { user_id },
+        { $addToSet: { badges: 'voyago_pro' } },
+      ).exec();
+    } catch (err) {
+      this.logger.warn(`Failed to award pro badge for ${user_id}: ${err.message}`);
+    }
 
     // Mark transaction as applied
     if (session_id) {

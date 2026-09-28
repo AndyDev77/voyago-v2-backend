@@ -22,6 +22,7 @@ export class TripsController {
 
   @Get('trip/:trip_id')
   async getTrip(@Param('trip_id') trip_id: string) {
+    // Public trip lookup falls through to shared DB
     return this.tripsService.getTripById(trip_id);
   }
 

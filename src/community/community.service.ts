@@ -1,22 +1,27 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Trip, TripDocument } from '../trips/schemas/trip.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
-import { Profile, ProfileDocument } from '../gamification/schemas/profile.schema';
+import { ProfileSchema } from '../gamification/schemas/profile.schema';
+import { TenancyService } from '../tenancy/tenancy.service';
 
 import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
 
 @Injectable()
 export class CommunityService {
+  private readonly logger = new Logger(CommunityService.name);
+
   constructor(
-    @InjectModel(Trip.name, TENANT_DB_CONNECTION) private readonly tripModel: Model<TripDocument>,
+    // Shared/community trip mirror — reads public trips from voyago_tenants
+    @InjectModel(Trip.name, TENANT_DB_CONNECTION) private readonly sharedTripModel: Model<TripDocument>,
     @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
-    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
+    private readonly tenancyService: TenancyService,
   ) {}
 
   async getPublicFeed(): Promise<object[]> {
-    const trips = await this.tripModel
+    // Read public trips from shared/mirrored DB
+    const trips = await this.sharedTripModel
       .find({ is_public: true })
       .sort({ created_at: -1 })
       .limit(50)
@@ -54,8 +59,21 @@ export class CommunityService {
       throw new NotFoundException(`User ${user_id} not found`);
     }
 
-    const profile = await this.profileModel.findOne({ user_id }).lean().exec();
-    const trips = await this.tripModel
+    // Get profile from the user's own tenant DB
+    let profile: any = null;
+    try {
+      const ProfileModel = await this.tenancyService.getTenantModel<any>(
+        user_id,
+        'Profile',
+        ProfileSchema,
+      );
+      profile = await ProfileModel.findOne({ user_id }).lean().exec();
+    } catch (err) {
+      this.logger.warn(`Could not fetch profile for ${user_id}: ${err.message}`);
+    }
+
+    // Get public trips from shared DB
+    const trips = await this.sharedTripModel
       .find({ user_id, is_public: true })
       .sort({ created_at: -1 })
       .lean()

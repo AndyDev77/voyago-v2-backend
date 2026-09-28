@@ -7,7 +7,7 @@ export class TenancyMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction) {
     let resolvedTenantId: string | undefined;
 
-    // 1. Check x-tenant-id header
+    // 1. Check x-tenant-id header (sent by frontend after auth)
     const headerTenantId = req.headers['x-tenant-id']?.toString();
     if (headerTenantId && headerTenantId.trim().length > 0) {
       resolvedTenantId = headerTenantId.trim();
@@ -18,7 +18,7 @@ export class TenancyMiddleware implements NestMiddleware {
       resolvedTenantId = req.query.tenantId.toString().trim();
     }
 
-    // 3. Fallback to default tenant
+    // 3. Fallback to default tenant (will be overridden by SessionAuthGuard for authenticated routes)
     if (!resolvedTenantId) {
       resolvedTenantId = DEFAULT_TENANT_ID;
     }

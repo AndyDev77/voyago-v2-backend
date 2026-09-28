@@ -45,12 +45,10 @@ export class SessionAuthGuard implements CanActivate {
       throw new UnauthorizedException('User not found');
     }
 
-    const tenantId =
-      request.headers['x-tenant-id']?.toString() ||
-      user.tenant_id ||
-      'default';
-
+    // Multi-database: tenant_id IS the user_id (each user has its own DB)
+    const tenantId = user.user_id;
     user.tenant_id = tenantId;
+
     request.tenantId = tenantId;
     request.user = user;
     request.session_token = token;

@@ -5,10 +5,10 @@ import { AuthService } from './auth.service';
 import { User, UserSchema } from './schemas/user.schema';
 import { UserSession, UserSessionSchema } from './schemas/user-session.schema';
 import { PasswordReset, PasswordResetSchema } from './schemas/password-reset.schema';
-import { Profile, ProfileSchema } from '../gamification/schemas/profile.schema';
 import { SessionAuthGuard } from '../common/guards/session-auth.guard';
+import { TenancyModule } from '../tenancy/tenancy.module';
 
-import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+import { GLOBAL_DB_CONNECTION } from '../common/constants';
 
 @Module({
   imports: [
@@ -20,10 +20,7 @@ import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants'
       ],
       GLOBAL_DB_CONNECTION,
     ),
-    MongooseModule.forFeature(
-      [{ name: Profile.name, schema: ProfileSchema }],
-      TENANT_DB_CONNECTION,
-    ),
+    TenancyModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, SessionAuthGuard],

@@ -139,13 +139,10 @@ export class AiService {
 
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
     const modelsToTry = [
-      'gemini-2.5-flash',
-      'gemini-1.5-flash-latest',
-      'gemini-1.5-pro-latest',
-      'gemini-2.0-flash-exp',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro',
-      'gemini-pro',
+      'gemini-3.8-flash',
+      'gemini-2.0-flash',
+      'gemini-2.5-flash-preview-05-20',
+      'gemini-2.0-flash-lite',
     ];
     const minPois = dto.duration_days * 3;
     const maxPois = dto.duration_days * 5;

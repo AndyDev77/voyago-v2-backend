@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Profile, ProfileDocument } from './schemas/profile.schema';
+import { ProfileSchema } from './schemas/profile.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
+import { TenancyService } from '../tenancy/tenancy.service';
 
 const XP_ACTIONS: Record<string, number> = {
   generate_trip: 50,
@@ -12,31 +13,87 @@ const XP_ACTIONS: Record<string, number> = {
 
 const ONE_TIME_ACTIONS = ['first_swipe'];
 
-import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
+import { GLOBAL_DB_CONNECTION } from '../common/constants';
 
 @Injectable()
 export class GamificationService {
+  private readonly logger = new Logger(GamificationService.name);
+
   constructor(
-    @InjectModel(Profile.name, TENANT_DB_CONNECTION) private readonly profileModel: Model<ProfileDocument>,
     @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
+    private readonly tenancyService: TenancyService,
   ) {}
 
   async getProfile(user_id: string): Promise<object> {
-    const profile = await this.profileModel.findOne({ user_id }).lean().exec();
+    // Get profile from user's own tenant DB
+    const ProfileModel = await this.tenancyService.getTenantModel<any>(
+      user_id,
+      'Profile',
+      ProfileSchema,
+    );
+
+    let profile = await ProfileModel.findOne({ user_id }).lean().exec();
     const user = await this.userModel.findOne({ user_id }).lean().exec();
 
+    // 1. If not found in user's tenant DB, check legacy shared DB
     if (!profile) {
-      throw new NotFoundException(`Profile for user ${user_id} not found`);
+      try {
+        const LegacyProfileModel = await this.tenancyService.getTenantModel<any>(
+          'default',
+          'Profile',
+          ProfileSchema,
+        );
+        const legacyProfile = await LegacyProfileModel.findOne({ user_id }).lean().exec();
+        if (legacyProfile) {
+          const newDoc = await ProfileModel.create({
+            user_id,
+            tenant_id: user_id,
+            xp: legacyProfile.xp || 0,
+            level: legacyProfile.level || 1,
+            streak: legacyProfile.streak || 0,
+            badges: legacyProfile.badges || [],
+            trips_count: legacyProfile.trips_count || 0,
+            last_active: legacyProfile.last_active || new Date(),
+          });
+          profile = newDoc.toObject ? newDoc.toObject() : newDoc;
+          this.logger.log(`Migrated legacy profile to tenant DB for user: ${user_id}`);
+        }
+      } catch (err) {
+        this.logger.warn(`Could not check legacy profile for ${user_id}: ${err.message}`);
+      }
+    }
+
+    // 2. If still no profile, auto-create initial profile in user's tenant DB
+    if (!profile) {
+      const created = await ProfileModel.create({
+        user_id,
+        tenant_id: user_id,
+        xp: 0,
+        level: 1,
+        streak: 0,
+        badges: [],
+        trips_count: 0,
+        last_active: new Date(),
+      });
+      profile = created.toObject ? created.toObject() : created;
+      this.logger.log(`Auto-created initial profile in tenant DB for user: ${user_id}`);
     }
 
     return {
       user_id,
-      xp: profile.xp,
-      level: profile.level,
-      streak: profile.streak,
-      badges: profile.badges,
-      trips_count: profile.trips_count,
-      last_active: profile.last_active,
+      name: user?.name || 'Voyageur',
+      pseudo: user?.pseudo || null,
+      avatar_emoji: user?.avatar_emoji || null,
+      country: user?.country || null,
+      city: user?.city || null,
+      is_pro: user?.is_pro || false,
+      pro_tier: user?.pro_tier || null,
+      xp: profile.xp ?? 0,
+      level: profile.level ?? 1,
+      streak: profile.streak ?? 0,
+      badges: profile.badges ?? [],
+      trips_count: profile.trips_count ?? 0,
+      last_active: profile.last_active ?? new Date(),
       user: user
         ? {
             name: user.name,
@@ -55,10 +112,18 @@ export class GamificationService {
       throw new BadRequestException(`Unknown XP action: ${action}`);
     }
 
-    let profile = await this.profileModel.findOne({ user_id }).exec();
+    // Get profile model from user's tenant DB
+    const ProfileModel = await this.tenancyService.getTenantModel<any>(
+      user_id,
+      'Profile',
+      ProfileSchema,
+    );
+
+    let profile = await ProfileModel.findOne({ user_id }).exec();
     if (!profile) {
-      profile = await this.profileModel.create({
+      profile = await ProfileModel.create({
         user_id,
+        tenant_id: user_id,
         xp: 0,
         level: 1,
         streak: 0,
@@ -92,7 +157,7 @@ export class GamificationService {
 
     // Award badge for first_swipe action
     if (action === 'first_swipe' && !profile.badges.includes('first_swipe')) {
-      await this.profileModel.updateOne(
+      await ProfileModel.updateOne(
         { user_id },
         {
           $set: updateFields,
@@ -100,10 +165,10 @@ export class GamificationService {
         },
       ).exec();
     } else {
-      await this.profileModel.updateOne({ user_id }, { $set: updateFields }).exec();
+      await ProfileModel.updateOne({ user_id }, { $set: updateFields }).exec();
     }
 
-    const updated = await this.profileModel.findOne({ user_id }).lean().exec();
+    const updated = await ProfileModel.findOne({ user_id }).lean().exec();
     return {
       user_id,
       xp: updated.xp,
