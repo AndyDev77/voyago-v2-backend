@@ -106,8 +106,47 @@ export class AiService {
     return this.generateMockPois(dto);
   }
 
+  private getCityCoordinates(destination: string): { lat: number; lng: number } {
+    const dest = destination.toLowerCase().trim();
+    const cityCoords: Record<string, { lat: number; lng: number }> = {
+      abidjan: { lat: 5.3600, lng: -4.0083 },
+      paris: { lat: 48.8566, lng: 2.3522 },
+      tokyo: { lat: 35.6762, lng: 139.6503 },
+      'new york': { lat: 40.7128, lng: -74.0060 },
+      londres: { lat: 51.5074, lng: -0.1278 },
+      london: { lat: 51.5074, lng: -0.1278 },
+      dakar: { lat: 14.7167, lng: -17.4677 },
+      marrakech: { lat: 31.6295, lng: -7.9811 },
+      rome: { lat: 41.9028, lng: 12.4964 },
+      barcelone: { lat: 41.3879, lng: 2.1699 },
+      barcelona: { lat: 41.3879, lng: 2.1699 },
+      montreal: { lat: 45.5017, lng: -73.5673 },
+      bangkok: { lat: 13.7563, lng: 100.5018 },
+      dubai: { lat: 25.2048, lng: 55.2708 },
+      rio: { lat: -22.9068, lng: -43.1729 },
+      sydney: { lat: -33.8688, lng: 151.2093 },
+      berlin: { lat: 52.5200, lng: 13.4050 },
+      amsterdam: { lat: 52.3676, lng: 4.9041 },
+      lisbonne: { lat: 38.7223, lng: -9.1393 },
+      lisbon: { lat: 38.7223, lng: -9.1393 },
+    };
+
+    for (const [key, coords] of Object.entries(cityCoords)) {
+      if (dest.includes(key)) return coords;
+    }
+    return { lat: 5.3600, lng: -4.0083 };
+  }
+
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
-    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-pro'];
+    const modelsToTry = [
+      'gemini-2.5-flash',
+      'gemini-1.5-flash-latest',
+      'gemini-1.5-pro-latest',
+      'gemini-2.0-flash-exp',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro',
+      'gemini-pro',
+    ];
     const minPois = dto.duration_days * 3;
     const maxPois = dto.duration_days * 5;
 
@@ -211,11 +250,12 @@ Chaque POI doit avoir exactement ces champs:
   }
 
   private sanitizePois(rawPois: any[], dto: GenerateTripDto): POI[] {
+    const coords = this.getCityCoordinates(dto.destination);
     return rawPois.map((p, idx) => ({
       name: p.name || `Étape ${idx + 1}`,
       description: p.description || `Découverte inoubliable à ${dto.destination}.`,
-      lat: typeof p.lat === 'number' ? p.lat : parseFloat(p.lat) || 48.8566,
-      lng: typeof p.lng === 'number' ? p.lng : parseFloat(p.lng) || 2.3522,
+      lat: typeof p.lat === 'number' && p.lat !== 0 ? p.lat : parseFloat(p.lat) || (coords.lat + (idx * 0.005)),
+      lng: typeof p.lng === 'number' && p.lng !== 0 ? p.lng : parseFloat(p.lng) || (coords.lng - (idx * 0.005)),
       day: typeof p.day === 'number' ? p.day : parseInt(p.day) || Math.floor(idx / 3) + 1,
       order: typeof p.order === 'number' ? p.order : (idx % 3) + 1,
       duration_minutes: typeof p.duration_minutes === 'number' ? p.duration_minutes : 90,
@@ -227,6 +267,7 @@ Chaque POI doit avoir exactement ces champs:
 
   private generateMockPois(dto: GenerateTripDto): POI[] {
     const pois: POI[] = [];
+    const coords = this.getCityCoordinates(dto.destination);
     const activities = [
       { name: 'Centre Historique & Rues Anciennes', cat: 'culture', desc: `Balade au cœur de ${dto.destination} et découverte du patrimoine.` },
       { name: 'Marché Local & Spécialités', cat: 'gastronomie', desc: `Dégustation des produits régionaux et de la cuisine typique de ${dto.destination}.` },
@@ -243,8 +284,8 @@ Chaque POI doit avoir exactement ces champs:
         pois.push({
           name: `${act.name} (${dto.destination})`,
           description: act.desc,
-          lat: 48.8566 + (day * 0.01) + (order * 0.005),
-          lng: 2.3522 + (day * 0.01) - (order * 0.005),
+          lat: coords.lat + (day * 0.006) + (order * 0.003),
+          lng: coords.lng + (day * 0.006) - (order * 0.003),
           day,
           order,
           duration_minutes: 90,
