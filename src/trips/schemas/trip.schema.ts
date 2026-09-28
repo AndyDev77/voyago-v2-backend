@@ -14,6 +14,9 @@ export class POI {
   category: string;
   image_query: string;
   image_url: string | null;
+  rating?: number;
+  reviews_count?: number;
+  insider_tip?: string | null;
 }
 
 export class DayWeather {

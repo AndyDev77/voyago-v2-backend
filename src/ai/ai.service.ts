@@ -147,26 +147,44 @@ export class AiService {
     const minPois = dto.duration_days * 3;
     const maxPois = dto.duration_days * 5;
 
-    const prompt = `Tu es un expert en voyages pour l'application Voyago.
-Génère un itinéraire JSON pour un voyage à ${dto.destination} pour une durée de ${dto.duration_days} jour(s).
-Rythme: ${dto.pace}. Transports: ${dto.transports.join(', ')}. Budget: ${dto.budget}. Centres d'intérêt: ${dto.interests.join(', ')}.
+    const prompt = `Tu es Voyago, un expert passionné de voyages et guide local virtuel. Tu crées des itinéraires immersifs et personnalisés.
 
-Retourne UNIQUEMENT un objet JSON valide avec une clé "pois" contenant un tableau de ${minPois} à ${maxPois} points d'intérêt répartis équitablement sur ${dto.duration_days} jour(s).
+MISSION : Génère un itinéraire de voyage exceptionnel et réaliste pour ${dto.destination} sur ${dto.duration_days} jour(s).
 
-Chaque POI doit respecter exactement ce schéma JSON:
+PROFIL DU VOYAGEUR :
+- Rythme : ${dto.pace} (${dto.pace === 'tranquille' ? '3 activités/jour max, longues pauses' : dto.pace === 'intensif' ? '5+ activités/jour, rythme soutenu' : '3-4 activités/jour, pauses modérées'})
+- Transports : ${dto.transports.join(', ')}
+- Budget : ${dto.budget} (${dto.budget === 'economique' ? 'privilégier gratuit et bon marché' : dto.budget === 'luxe' ? 'expériences premium et exclusives' : 'bon rapport qualité-prix'})
+- Centres d'intérêt : ${dto.interests.join(', ')}
+
+RÈGLES ABSOLUES :
+1. Utilise des VRAIS noms de lieux, restaurants, musées, parcs (ex: "Musée du Louvre", pas "Musée des Beaux-Arts")
+2. Les coordonnées GPS (lat/lng) doivent être EXACTES et correspondre au lieu réel
+3. Répartis les POIs logiquement par proximité géographique dans chaque journée
+4. Alterne les types d'activités (pas 3 musées d'affilée)
+5. Chaque description doit contenir un conseil d'initié unique et personnel
+6. L'image_query doit être le nom anglais exact du lieu pour trouver son article Wikipedia
+
+Retourne UNIQUEMENT un objet JSON valide avec une clé "pois" contenant un tableau de ${minPois} à ${maxPois} points d'intérêt.
+
+Chaque POI doit respecter exactement ce schéma JSON :
 {
-  "name": "string (Nom du lieu ou de l'activité)",
-  "description": "string (2-3 phrases immersives en français avec conseils)",
-  "lat": number (coordonnée latitude réelle et précise de ${dto.destination}),
-  "lng": number (coordonnée longitude réelle et précise de ${dto.destination}),
+  "name": "string (nom RÉEL et précis du lieu, ex: Café de Flore, Tour Eiffel)",
+  "description": "string (2-3 phrases immersives en français avec un conseil d'initié, ex: 'Arrivez avant 10h pour éviter la foule et admirer la vue sans attente.')",
+  "lat": number (latitude GPS EXACTE du lieu réel),
+  "lng": number (longitude GPS EXACTE du lieu réel),
   "day": number (de 1 à ${dto.duration_days}),
   "order": number (ordre chronologique dans la journée, commence à 1),
-  "duration_minutes": number (durée estimée en minutes, ex: 60, 90, 120),
-  "category": "string (une catégorie parmi: ${dto.interests.join(', ')})",
-  "image_query": "string (terme de recherche en anglais pour trouver une image sur Wikipedia)"
+  "duration_minutes": number (durée réaliste : 45 pour un café, 120 pour un musée, 90 pour un parc),
+  "category": "string (parmi: ${dto.interests.join(', ')}, gastronomie, culture, nature, art, nightlife, bien_etre, shopping)",
+  "image_query": "string (nom anglais du lieu pour Wikipedia, ex: 'Eiffel Tower', 'Louvre Museum')",
+  "rating": number (note entre 4.3 et 4.9),
+  "reviews_count": number (nombre d'avis entre 500 et 15000),
+  "insider_tip": "string (conseil secret ou spécialité locale à ne pas manquer, ex: 'Commandez le chocolat chaud à l\\'ancienne au fond du salon')"
 }
 
-IMPORTANT: Ne renvoie AUCUN markdown, pas de balise \`\`\`json, uniquement le texte brut JSON valide.`;
+IMPORTANT : Pas de markdown, pas de balise \`\`\`json, UNIQUEMENT le texte brut JSON valide.`;
+
 
     for (const modelName of modelsToTry) {
       try {
@@ -202,20 +220,30 @@ IMPORTANT: Ne renvoie AUCUN markdown, pas de balise \`\`\`json, uniquement le te
       'claude-sonnet-4-5',
     ];
 
-    const prompt = `Tu es un expert en voyages pour l'application Voyago. Génère un itinéraire JSON pour un voyage à ${dto.destination} pour ${dto.duration_days} jour(s).
-Rythme: ${dto.pace}. Transports: ${dto.transports.join(', ')}. Budget: ${dto.budget}. Centres d'intérêt: ${dto.interests.join(', ')}.
+    const prompt = `Tu es Voyago, un expert passionné de voyages et guide local virtuel. Tu crées des itinéraires immersifs et personnalisés.
 
-Retourne UNIQUEMENT un objet JSON valide avec une clé "pois" contenant un tableau de points d'intérêt (${minPois} à ${maxPois} POIs).
-Chaque POI doit avoir exactement ces champs:
-- name: string
-- description: string
-- lat: number
-- lng: number
-- day: number
-- order: number
-- duration_minutes: number
-- category: string
-- image_query: string`;
+MISSION : Génère un itinéraire de voyage exceptionnel et réaliste pour ${dto.destination} sur ${dto.duration_days} jour(s).
+
+PROFIL DU VOYAGEUR :
+- Rythme : ${dto.pace}
+- Transports : ${dto.transports.join(', ')}
+- Budget : ${dto.budget}
+- Centres d'intérêt : ${dto.interests.join(', ')}
+
+RÈGLES :
+1. Utilise des VRAIS noms de lieux (ex: "Café de Flore", pas "Café Historique")
+2. Coordonnées GPS EXACTES des lieux réels
+3. Répartis par proximité géographique dans chaque journée
+4. Alterne les types d'activités
+5. Chaque description = conseil d'initié unique
+
+Retourne UNIQUEMENT un JSON valide : {"pois": [...]} avec ${minPois} à ${maxPois} POIs.
+Chaque POI : { name, description, lat, lng, day, order, duration_minutes, category, image_query, rating, reviews_count, insider_tip }
+- image_query = nom anglais du lieu pour Wikipedia (ex: "Eiffel Tower")
+- category parmi: ${dto.interests.join(', ')}, gastronomie, culture, nature, art, nightlife, bien_etre, shopping
+- rating = nombre entre 4.3 et 4.9
+- reviews_count = nombre entre 500 et 15000
+- insider_tip = astuce secrète d'initié`;
 
     for (const model of modelsToTry) {
       try {
@@ -259,6 +287,9 @@ Chaque POI doit avoir exactement ces champs:
       category: p.category || dto.interests[0] || 'culture',
       image_query: p.image_query || p.name || dto.destination,
       image_url: null,
+      rating: typeof p.rating === 'number' ? p.rating : 4.7,
+      reviews_count: typeof p.reviews_count === 'number' ? p.reviews_count : 1250,
+      insider_tip: p.insider_tip || null,
     }));
   }
 
