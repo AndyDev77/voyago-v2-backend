@@ -17,13 +17,14 @@ import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { GoogleSessionDto } from './dto/google-session.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { GuestLoginDto } from './dto/guest-login.dto';
+import { randomUUID } from 'crypto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) { }
 
   @Get('options')
   getOptions() {
@@ -49,8 +50,10 @@ export class AuthController {
 
   @Post('guest')
   @HttpCode(HttpStatus.OK)
-  async guestLogin(@Body() dto: GuestLoginDto) {
-    return this.authService.guestLogin(dto.user_id);
+  async guestLogin(@Body() dto?: GuestLoginDto) {
+    const rawId = dto?.user_id || dto?.guest_id;
+    const guestId = (rawId && rawId.startsWith('guest_')) ? rawId : `guest_${randomUUID()}`;
+    return this.authService.guestLogin(guestId);
   }
 
   @Post('forgot-password')
