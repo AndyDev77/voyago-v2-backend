@@ -23,6 +23,9 @@ export class User {
   @Prop()
   picture: string;
 
+  @Prop({ default: null })
+  picture_key: string;
+
   @Prop()
   pseudo: string;
 

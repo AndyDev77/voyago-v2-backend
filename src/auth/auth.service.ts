@@ -367,7 +367,12 @@ export class AuthService {
     if (dto.onboarding_completed !== undefined) updateFields.onboarding_completed = dto.onboarding_completed;
     if (dto.country !== undefined) updateFields.country = dto.country;
     if (dto.city !== undefined) updateFields.city = dto.city;
-    if (dto.picture !== undefined) updateFields.picture = dto.picture;
+    if (dto.picture !== undefined) {
+      updateFields.picture = dto.picture;
+      if (!dto.picture) {
+        updateFields.picture_key = null;
+      }
+    }
 
     const updated = await this.userModel
       .findOneAndUpdate(

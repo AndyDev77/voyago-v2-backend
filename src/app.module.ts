@@ -11,6 +11,7 @@ import { GamificationModule } from './gamification/gamification.module';
 import { ProModule } from './pro/pro.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { InterestsModule } from './interests/interests.module';
+import { UploadModule } from './upload/upload.module';
 
 import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from './common/constants';
 
@@ -57,6 +58,7 @@ import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from './common/constants';
     ProModule,
     WebhooksModule,
     InterestsModule,
+    UploadModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -47,6 +47,24 @@ async function bootstrap() {
     express.urlencoded({ extended: true, limit: '50mb' })(req, res, next);
   });
 
+  // 3b. UploadThing Express Adapter Route Handler (https://docs.uploadthing.com/backend-adapters/express)
+  try {
+    const { createRouteHandler } = require('uploadthing/express');
+    const { uploadRouter } = require('./upload/uploadthing.config');
+    const uploadthingToken =
+      process.env.UPLOADTHING_TOKEN || process.env.UPLOADTHING_SECRET;
+    app.use(
+      '/api/uploadthing',
+      createRouteHandler({
+        router: uploadRouter,
+        config: uploadthingToken ? { token: uploadthingToken } : undefined,
+      }),
+    );
+    logger.log('UploadThing Express route handler mounted on /api/uploadthing');
+  } catch (err: any) {
+    logger.warn(`Could not mount UploadThing express adapter: ${err.message}`);
+  }
+
   // 4. Global API Prefix
   app.setGlobalPrefix('api');
 
