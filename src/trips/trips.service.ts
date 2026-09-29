@@ -176,16 +176,25 @@ export class TripsService {
           return { ...poi, image_url: imageUrl };
         }),
       ),
-      this.aiService.fetchWeather(lat, lng, dto.duration_days),
+      this.aiService.fetchWeather(lat, lng, dto.duration_days, dto.start_date),
     ]);
 
     // 3. Create trip document in user's tenant DB
     const tripId = uuidv4();
+    const parts = dto.destination.split(',').map((s) => s.trim());
+    const derivedCity = dto.city || (parts.length > 0 ? parts[0] : dto.destination);
+    const derivedCountry = dto.country || (parts.length > 1 ? parts.slice(1).join(', ') : undefined);
+
     const tripData = {
       id: tripId,
       user_id: user.user_id,
       tenant_id: tenantId,
       destination: dto.destination,
+      city: derivedCity,
+      country: derivedCountry,
+      country_code: dto.country_code,
+      start_date: dto.start_date,
+      end_date: dto.end_date,
       duration_days: dto.duration_days,
       pace: dto.pace,
       transports: dto.transports,

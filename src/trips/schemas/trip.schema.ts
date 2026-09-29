@@ -63,6 +63,21 @@ export class Trip {
   @Prop({ type: [Object], default: [] })
   weather: DayWeather[];
 
+  @Prop({ required: false })
+  city?: string;
+
+  @Prop({ required: false })
+  country?: string;
+
+  @Prop({ required: false })
+  country_code?: string;
+
+  @Prop({ required: false })
+  start_date?: string;
+
+  @Prop({ required: false })
+  end_date?: string;
+
   @Prop({ default: true })
   is_public: boolean;
 
@@ -83,3 +98,5 @@ TripSchema.index({ user_id: 1, tenant_id: 1 });
 TripSchema.index({ is_public: 1, created_at: -1 });
 TripSchema.index({ tenant_id: 1, is_public: 1, created_at: -1 });
 TripSchema.index({ destination: 1 });
+TripSchema.index({ city: 1 });
+TripSchema.index({ country: 1 });

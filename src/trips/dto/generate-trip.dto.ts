@@ -41,6 +41,22 @@ export class GenerateTripDto {
 
   @IsOptional()
   @IsString()
+  end_date?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  country_code?: string;
+
+  @IsOptional()
+  @IsString()
   @IsIn(['cold', 'balanced', 'warm'])
   thermal_sensitivity?: string;
 }

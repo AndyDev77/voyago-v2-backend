@@ -182,21 +182,43 @@ export class AiService {
     return 'Équilibré / Tempéré standard (confortable dans les conditions moyennes de saison)';
   }
 
-  private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
-    const modelsToTry = [
-      'gemini-flash-latest',
-      'gemini-3.7-flash',
-      'gemini-3.8-flash',
-      'gemini-3.5-flash',
-      'gemini-pro-latest',
-    ];
-
+  private buildOptimizedTripPrompt(dto: GenerateTripDto, cityCoords: { lat: number; lng: number }): string {
     const activitiesPerDay = dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
     const totalPoisCount = dto.duration_days * activitiesPerDay;
-    const cityCoords = await this.resolveDestinationCoordinates(dto.destination);
 
-    const prompt = `Tu es Voyago, l'intelligence artificielle experte en voyages haut de gamme et guide local d'élite.
-Tu conçois des itinéraires hyper-personnalisés, authentiques et immersifs.
+    let dateContext = '';
+    if (dto.start_date) {
+      const start = new Date(dto.start_date);
+      const end = dto.end_date
+        ? new Date(dto.end_date)
+        : new Date(start.getTime() + (dto.duration_days - 1) * 86400000);
+      const options: Intl.DateTimeFormatOptions = {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      };
+      const startFormatted = isNaN(start.getTime())
+        ? dto.start_date
+        : start.toLocaleDateString('fr-FR', options);
+      const endFormatted = isNaN(end.getTime())
+        ? dto.end_date || ''
+        : end.toLocaleDateString('fr-FR', options);
+
+      dateContext = `
+- Période exacte du séjour : du ${startFormatted} au ${endFormatted} (${dto.duration_days} jours)
+- CALENDRIER & SAISONNALITÉ : Adapte impérativement l'itinéraire aux jours réels de la semaine (ex: musées fermés le lundi ou mardi, grands marchés locaux et animation le weekend) et aux conditions climatiques de cette saison à ${dto.destination}.`;
+    }
+
+    const paceDetails =
+      dto.pace === 'tranquille'
+        ? 'Tranquille (3 étapes/jour) : Visites immersives, longues pauses détente/café, flânerie privilégiée sans précipitation.'
+        : dto.pace === 'intensif'
+        ? 'Intensif (5 étapes/jour) : Itinéraire dynamique et exaltant, optimisé pour voir un maximum de merveilles sans temps mort.'
+        : 'Équilibré (4 étapes/jour) : Le dosage idéal entre incontournables, pépites secrètes, pause gourmande et temps libre.';
+
+    return `Tu es Voyago, l'intelligence artificielle experte en conception de voyages sur mesure et guide local d'exception.
+Tu conçois des itinéraires hyper-personnalisés, authentiques, géographiquement optimisés et mémorables.
 
 OBJECTIF MAJEUR :
 Génère l'itinéraire COMPLET pour ${dto.destination} sur STRICTEMENT ${dto.duration_days} JOUR(S).
@@ -207,28 +229,31 @@ Chaque jour doit proposer des lieux TOTALEMENT DIFFÉRENTS les uns des autres (a
 - Jour 1 : Cœur historique, monuments emblématiques et tables réputées
 - Jour 2 : Quartiers artistiques, musées incontournables et ruelles animées
 - Jour 3 : Parcs, nature, berges ou architecture contemporaine
-- Jour 4+ : Pépites secrètes, marchés locaux, rooftops et vie nocturne
+- Jour 4+ : Pépites secrètes, marchés locaux, panoramas/rooftops et vie locale
 
-PROFIL ET PRÉFÉRENCES DU VOYAGEUR :
-- Destination : ${dto.destination} (coordonnées : lat ${cityCoords.lat}, lng ${cityCoords.lng})
+PROFIL ET PARAMÈTRES DU VOYAGE :
+- Destination : ${dto.destination} (ancrage GPS approximatif : lat ${cityCoords.lat}, lng ${cityCoords.lng})
+${dateContext}
 - Durée exacte : ${dto.duration_days} jour(s)
 - Centres d'intérêt prioritaires : ${dto.interests.join(', ')}
-- Rythme souhaité : ${dto.pace} (${activitiesPerDay} activités sélectionnées par jour)
+- Rythme souhaité : ${paceDetails}
 - Mode de déplacement : ${dto.transports.join(', ')}
-- Budget : ${dto.budget}
+- Budget : ${dto.budget} (adapter le standing des adresses et activités)
 - Sensibilité thermique du voyageur : ${this.getThermalSensitivityNote(dto.thermal_sensitivity)}
 
-EXIGENCES D'AUTHENTICITÉ ET DE QUALITÉ :
-1. VRAIS LIEUX UNIQUEMENT : Propose de vrais établissements, monuments historiques célèbres, restaurants réputés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
-2. COORDONNÉES GPS RÉELLES : Chaque lieu doit comporter sa latitude ('lat') et longitude ('lng') réelles et précises dans la ville de ${dto.destination}.
-3. DISTRIBUTION PAR JOUR CHRONOLOGIQUE :
-   - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée).
-   - Les étapes d'un même jour doivent être géographiquement cohérentes.
-4. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}). Alterne intelligemment entre culture, gastronomie, détente, art et nature.
-5. CONSEILS D'INITIÉ ET ADAPTATION MÉTÉO/THERMIQUE : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le meilleur plat ou cocktail, astuce vestimentaire adaptée à sa sensibilité thermique ${dto.thermal_sensitivity || 'équilibrée'}, horaire idéal pour éviter la foule).
-6. STATS & NOTATION :
+EXIGENCES D'OPTIMISATION ET D'AUTHENTICITÉ :
+1. VRAIS ÉTABLISSEMENTS ET MONUMENTS : Propose de vrais établissements, monuments historiques célèbres, restaurants renommés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
+2. COORDONNÉES GPS RÉELLES ET EXACTES : Chaque lieu doit comporter sa latitude ('lat') et longitude ('lng') réelles et précises dans la ville de ${dto.destination}.
+3. CLUSTERING GÉOGRAPHIQUE PAR JOURNÉE (ZÉRO TRAJET INUTILE) :
+   - Pour chaque jour, TOUS les POIs doivent être situés dans un même quartier ou secteur proche (ex: à Paris : Jour 1 dans Le Marais / Île de la Cité, Jour 2 à Montmartre ; à Tokyo : Jour 1 à Shibuya / Harajuku, Jour 2 à Asakusa / Ueno).
+   - Les étapes d'une même journée s'enchaînent logiquement à pied ou en court trajet selon le transport choisi (${dto.transports.join(', ')}).
+4. DISTRIBUTION CHRONOLOGIQUE :
+   - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée, order: 5 = Nuit si intensif).
+5. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}).
+6. ASTUCES D'INITIÉ PRÉCIEUSES : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le meilleur plat ou boisson à commander, le meilleur créneau pour éviter la file d'attente, conseil vestimentaire adapté à la météo et sa sensibilité thermique).
+7. STATS & NOTATION RÉALISTES :
    - rating : note réaliste entre 4.4 et 4.9
-   - reviews_count : nombre d'avis réels entre 850 et 24000
+   - reviews_count : nombre d'avis réels entre 850 et 28000
 
 Format JSON attendu :
 {
@@ -241,8 +266,8 @@ Format JSON attendu :
       "day": 1,
       "order": 1,
       "duration_minutes": 90,
-      "category": "gastronomie",
-      "image_query": "English name for photo lookup",
+      "category": "culture",
+      "image_query": "English landmark name for photo lookup",
       "rating": 4.8,
       "reviews_count": 3200,
       "insider_tip": "Conseil d'initié concret"
@@ -251,6 +276,19 @@ Format JSON attendu :
 }
 Génère au total exactement ${totalPoisCount} POIs répartis équitablement sur les ${dto.duration_days} jour(s).
 Retourne UNIQUEMENT l'objet JSON.`;
+  }
+
+  private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
+    const modelsToTry = [
+      'gemini-flash-latest',
+      'gemini-3.7-flash',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash',
+      'gemini-pro-latest',
+    ];
+
+    const cityCoords = await this.resolveDestinationCoordinates(dto.destination);
+    const prompt = this.buildOptimizedTripPrompt(dto, cityCoords);
 
     for (const modelName of modelsToTry) {
       try {
@@ -283,9 +321,6 @@ Retourne UNIQUEMENT l'objet JSON.`;
   }
 
   private async generateWithClaude(dto: GenerateTripDto): Promise<POI[]> {
-    const activitiesPerDay = dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
-    const totalPoisCount = dto.duration_days * activitiesPerDay;
-
     const modelsToTry = [
       'claude-haiku-4-5-20251001',
       'claude-sonnet-4-6',
@@ -295,55 +330,8 @@ Retourne UNIQUEMENT l'objet JSON.`;
       'claude-3-5-haiku-20241022',
     ];
 
-    const prompt = `Tu es Voyago, l'intelligence artificielle experte en voyages haut de gamme et guide local d'élite.
-Tu conçois des itinéraires hyper-personnalisés, authentiques et immersifs.
-
-OBJECTIF MAJEUR :
-Génère l'itinéraire COMPLET pour ${dto.destination} sur STRICTEMENT ${dto.duration_days} JOUR(S).
-Tu dois impérativement couvrir CHAQUE JOUR du voyage (Jour 1, Jour 2, ... jusqu'à Jour ${dto.duration_days}).
-
-PROFIL ET PRÉFÉRENCES DU VOYAGEUR :
-- Destination : ${dto.destination}
-- Durée exacte : ${dto.duration_days} jour(s)
-- Centres d'intérêt prioritaires : ${dto.interests.join(', ')}
-- Rythme souhaité : ${dto.pace} (${activitiesPerDay} activités sélectionnées par jour)
-- Mode de déplacement : ${dto.transports.join(', ')}
-- Budget : ${dto.budget}
-- Sensibilité thermique du voyageur : ${this.getThermalSensitivityNote(dto.thermal_sensitivity)}
-
-EXIGENCES D'AUTHENTICITÉ ET DE QUALITÉ :
-1. VRAIS LIEUX UNIQUEMENT : Propose de vrais établissements, monuments historiques célèbres, restaurants réputés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
-2. COORDONNÉES GPS RÉELLES : Chaque lieu doit comporter sa latitude ('lat') et longitude ('lng') réelles et précises dans la ville de ${dto.destination}.
-3. DISTRIBUTION PAR JOUR CHRONOLOGIQUE :
-   - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée).
-   - Les étapes d'un même jour doivent être géographiquement cohérentes.
-4. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}).
-5. CONSEILS D'INITIÉ ET ADAPTATION THERMIQUE : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (en tenant compte de sa sensibilité ${dto.thermal_sensitivity || 'équilibrée'} pour l'habillement et le confort).
-6. STATS & NOTATION :
-   - rating : note réaliste entre 4.4 et 4.9
-   - reviews_count : nombre d'avis réels entre 850 et 24000
-
-Format JSON attendu :
-{
-  "pois": [
-    {
-      "name": "Nom exact et réel du lieu",
-      "description": "2 à 3 phrases immersives décrivant l'histoire et l'expérience sur place.",
-      "lat": 48.8566,
-      "lng": 2.3522,
-      "day": 1,
-      "order": 1,
-      "duration_minutes": 90,
-      "category": "gastronomie",
-      "image_query": "English name for photo lookup",
-      "rating": 4.8,
-      "reviews_count": 3200,
-      "insider_tip": "Conseil d'initié concret"
-    }
-  ]
-}
-Génère au total exactement ${totalPoisCount} POIs répartis équitablement sur les ${dto.duration_days} jour(s).
-Retourne UNIQUEMENT l'objet JSON.`;
+    const cityCoords = await this.resolveDestinationCoordinates(dto.destination);
+    const prompt = this.buildOptimizedTripPrompt(dto, cityCoords);
 
     for (const model of modelsToTry) {
       try {
@@ -364,7 +352,7 @@ Retourne UNIQUEMENT l'objet JSON.`;
 
         const parsed = JSON.parse(jsonText);
         if (parsed.pois && Array.isArray(parsed.pois) && parsed.pois.length > 0) {
-          return this.sanitizePois(parsed.pois, dto);
+          return this.sanitizePois(parsed.pois, dto, cityCoords);
         }
       } catch (err) {
         this.logger.warn(`Claude model ${model} error: ${err.message}`);
@@ -725,7 +713,7 @@ Retourne UNIQUEMENT l'objet JSON.`;
     }
   }
 
-  async fetchWeather(lat: number, lng: number, durationDays: number): Promise<DayWeather[]> {
+  async fetchWeather(lat: number, lng: number, durationDays: number, startDate?: string): Promise<DayWeather[]> {
     try {
       const response = await axios.get('https://api.open-meteo.com/v1/forecast', {
         params: {
@@ -739,16 +727,25 @@ Retourne UNIQUEMENT l'objet JSON.`;
       });
 
       const daily = response.data?.daily;
-      if (!daily) return this.generateFallbackWeather(durationDays);
+      if (!daily) return this.generateFallbackWeather(durationDays, startDate);
 
       const days = Math.min(durationDays, daily.time?.length || 0);
       const weather: DayWeather[] = [];
+      const baseDate = startDate ? new Date(startDate) : new Date();
 
       for (let i = 0; i < days; i++) {
         const code = daily.weathercode[i] ?? 0;
         const info = getWeatherInfo(code);
+
+        let dateStr = daily.time[i];
+        if (startDate && !isNaN(baseDate.getTime())) {
+          const d = new Date(baseDate);
+          d.setDate(baseDate.getDate() + i);
+          dateStr = d.toISOString().split('T')[0];
+        }
+
         weather.push({
-          date: daily.time[i],
+          date: dateStr,
           weather_code: code,
           temp_max: Math.round(daily.temperature_2m_max[i] ?? 22),
           temp_min: Math.round(daily.temperature_2m_min[i] ?? 16),
@@ -759,17 +756,18 @@ Retourne UNIQUEMENT l'objet JSON.`;
 
       return weather;
     } catch {
-      return this.generateFallbackWeather(durationDays);
+      return this.generateFallbackWeather(durationDays, startDate);
     }
   }
 
-  private generateFallbackWeather(durationDays: number): DayWeather[] {
+  private generateFallbackWeather(durationDays: number, startDate?: string): DayWeather[] {
     const weather: DayWeather[] = [];
-    const now = new Date();
+    const baseDate = startDate ? new Date(startDate) : new Date();
+    const validBase = isNaN(baseDate.getTime()) ? new Date() : baseDate;
 
     for (let i = 0; i < durationDays; i++) {
-      const date = new Date(now);
-      date.setDate(now.getDate() + i);
+      const date = new Date(validBase);
+      date.setDate(validBase.getDate() + i);
       weather.push({
         date: date.toISOString().split('T')[0],
         weather_code: 0,
