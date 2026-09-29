@@ -94,31 +94,35 @@ export class AiService {
       }
     }
 
-    // 2. Try Gemini AI (Gemini 2.0 / 1.5 Flash)
+    // 2. Try Gemini AI (Gemini Flash & Pro models with automatic cascade)
     if (this.genAI) {
       try {
         return await this.generateWithGemini(dto);
       } catch (err) {
-        this.logger.warn(`Gemini generation error: ${err.message}. Using intelligent mock fallback...`);
+        this.logger.warn(`Gemini generation error: ${err.message}. Using dynamic real-venue engine...`);
       }
     }
 
-    // 3. Fallback to high quality mock data
-    return this.generateMockPois(dto);
+    // 3. Fallback to dynamic real-venue generation
+    return await this.generateDynamicPois(dto);
   }
 
-  private getCityCoordinates(destination: string): { lat: number; lng: number } {
+  getCityCoordinates(destination: string): { lat: number; lng: number } {
     const dest = destination.toLowerCase().trim();
     const cityCoords: Record<string, { lat: number; lng: number }> = {
       abidjan: { lat: 5.3600, lng: -4.0083 },
+      babi: { lat: 5.3600, lng: -4.0083 },
       paris: { lat: 48.8566, lng: 2.3522 },
       tokyo: { lat: 35.6762, lng: 139.6503 },
       'new york': { lat: 40.7128, lng: -74.0060 },
+      nyc: { lat: 40.7128, lng: -74.0060 },
       londres: { lat: 51.5074, lng: -0.1278 },
       london: { lat: 51.5074, lng: -0.1278 },
+      londre: { lat: 51.5074, lng: -0.1278 },
       dakar: { lat: 14.7167, lng: -17.4677 },
       marrakech: { lat: 31.6295, lng: -7.9811 },
       rome: { lat: 41.9028, lng: 12.4964 },
+      roma: { lat: 41.9028, lng: 12.4964 },
       barcelone: { lat: 41.3879, lng: 2.1699 },
       barcelona: { lat: 41.3879, lng: 2.1699 },
       montreal: { lat: 45.5017, lng: -73.5673 },
@@ -133,9 +137,39 @@ export class AiService {
     };
 
     for (const [key, coords] of Object.entries(cityCoords)) {
-      if (dest.includes(key)) return coords;
+      if (dest.includes(key) || (dest.length >= 4 && key.includes(dest))) return coords;
     }
     return { lat: 5.3600, lng: -4.0083 };
+  }
+
+  async resolveDestinationCoordinates(destination: string): Promise<{ lat: number; lng: number }> {
+    const dest = destination.toLowerCase().trim();
+    // 1. Matched known destination
+    const known = this.getCityCoordinates(dest);
+    const isAbidjan = dest.includes('abidjan') || dest.includes('babi');
+    if (known.lat !== 5.3600 || isAbidjan) {
+      return known;
+    }
+
+    // 2. OpenStreetMap Nominatim universal geocoding for any city on earth
+    try {
+      const res = await axios.get('https://nominatim.openstreetmap.org/search', {
+        params: { q: destination, format: 'json', limit: 1 },
+        headers: { 'User-Agent': 'VoyagoApp/2.0 (contact@voyago.app)' },
+        timeout: 4000,
+      });
+      if (res.data && res.data.length > 0) {
+        const lat = parseFloat(res.data[0].lat);
+        const lng = parseFloat(res.data[0].lon);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          return { lat, lng };
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`Nominatim geocoding error for ${destination}: ${e.message}`);
+    }
+
+    return known;
   }
 
   private getThermalSensitivityNote(sensitivity?: string): string {
@@ -150,16 +184,16 @@ export class AiService {
 
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
     const modelsToTry = [
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
-      'gemini-3.8-flash',
       'gemini-flash-latest',
       'gemini-3.7-flash',
-      'gemini-2.5-flash-lite',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash',
+      'gemini-pro-latest',
     ];
 
     const activitiesPerDay = dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
     const totalPoisCount = dto.duration_days * activitiesPerDay;
+    const cityCoords = await this.resolveDestinationCoordinates(dto.destination);
 
     const prompt = `Tu es Voyago, l'intelligence artificielle experte en voyages haut de gamme et guide local d'élite.
 Tu conçois des itinéraires hyper-personnalisés, authentiques et immersifs.
@@ -168,8 +202,15 @@ OBJECTIF MAJEUR :
 Génère l'itinéraire COMPLET pour ${dto.destination} sur STRICTEMENT ${dto.duration_days} JOUR(S).
 Tu dois impérativement couvrir CHAQUE JOUR du voyage (Jour 1, Jour 2, ... jusqu'à Jour ${dto.duration_days}).
 
+RÈGLE D'OR ABSOLUE : INTERDICTION TOTALE DE RÉPÉTER UN LIEU !
+Chaque jour doit proposer des lieux TOTALEMENT DIFFÉRENTS les uns des autres (aucun doublon sur l'ensemble des ${dto.duration_days} jours).
+- Jour 1 : Cœur historique, monuments emblématiques et tables réputées
+- Jour 2 : Quartiers artistiques, musées incontournables et ruelles animées
+- Jour 3 : Parcs, nature, berges ou architecture contemporaine
+- Jour 4+ : Pépites secrètes, marchés locaux, rooftops et vie nocturne
+
 PROFIL ET PRÉFÉRENCES DU VOYAGEUR :
-- Destination : ${dto.destination}
+- Destination : ${dto.destination} (coordonnées : lat ${cityCoords.lat}, lng ${cityCoords.lng})
 - Durée exacte : ${dto.duration_days} jour(s)
 - Centres d'intérêt prioritaires : ${dto.interests.join(', ')}
 - Rythme souhaité : ${dto.pace} (${activitiesPerDay} activités sélectionnées par jour)
@@ -182,7 +223,7 @@ EXIGENCES D'AUTHENTICITÉ ET DE QUALITÉ :
 2. COORDONNÉES GPS RÉELLES : Chaque lieu doit comporter sa latitude ('lat') et longitude ('lng') réelles et précises dans la ville de ${dto.destination}.
 3. DISTRIBUTION PAR JOUR CHRONOLOGIQUE :
    - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée).
-   - Les étapes d'un même jour doivent être géographiquement cohérentes (évite les traversées inutiles de la ville).
+   - Les étapes d'un même jour doivent être géographiquement cohérentes.
 4. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}). Alterne intelligemment entre culture, gastronomie, détente, art et nature.
 5. CONSEILS D'INITIÉ ET ADAPTATION MÉTÉO/THERMIQUE : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le meilleur plat ou cocktail, astuce vestimentaire adaptée à sa sensibilité thermique ${dto.thermal_sensitivity || 'équilibrée'}, horaire idéal pour éviter la foule).
 6. STATS & NOTATION :
@@ -195,8 +236,8 @@ Format JSON attendu :
     {
       "name": "Nom exact et réel du lieu",
       "description": "2 à 3 phrases immersives décrivant l'histoire et l'expérience sur place.",
-      "lat": 48.8566,
-      "lng": 2.3522,
+      "lat": ${cityCoords.lat},
+      "lng": ${cityCoords.lng},
       "day": 1,
       "order": 1,
       "duration_minutes": 90,
@@ -230,10 +271,11 @@ Retourne UNIQUEMENT l'objet JSON.`;
 
         const parsed = JSON.parse(jsonText);
         if (parsed.pois && Array.isArray(parsed.pois) && parsed.pois.length > 0) {
-          return this.sanitizePois(parsed.pois, dto);
+          return this.sanitizePois(parsed.pois, dto, cityCoords);
         }
       } catch (err) {
         this.logger.warn(`Model ${modelName} error: ${err.message}`);
+        await new Promise((r) => setTimeout(r, 1200));
       }
     }
 
@@ -332,8 +374,8 @@ Retourne UNIQUEMENT l'objet JSON.`;
     throw new Error('All Claude models failed to generate valid POIs');
   }
 
-  private sanitizePois(rawPois: any[], dto: GenerateTripDto): POI[] {
-    const coords = this.getCityCoordinates(dto.destination);
+  private sanitizePois(rawPois: any[], dto: GenerateTripDto, fallbackCoords?: { lat: number; lng: number }): POI[] {
+    const coords = fallbackCoords || this.getCityCoordinates(dto.destination);
     const perDay = Math.ceil(rawPois.length / dto.duration_days);
 
     return rawPois.map((p, idx) => {
@@ -362,6 +404,28 @@ Retourne UNIQUEMENT l'objet JSON.`;
     });
   }
 
+  private getInsiderTipForThermal(sensitivity?: string, order?: number): string {
+    if (sensitivity === 'cold') {
+      return order === 1
+        ? 'Matinée fraîche : emportez une veste chaude ou écharpe légère pour apprécier la visite.'
+        : order === 2
+        ? 'Pause déjeuner cosy : réservez une table chaleureuse en intérieur pour savourer le plat du jour.'
+        : 'Fin d\'après-midi : réfugiez-vous dans un salon de thé ou café chaleureux pour une pause réconfortante.';
+    }
+    if (sensitivity === 'warm') {
+      return order === 1
+        ? 'Visite matinale idéale pour profiter de la fraîcheur avant les heures chaudes.'
+        : order === 2
+        ? 'Déjeuner à l\'ombre : privilégiez une salle climatisée ou une terrasse bien ombragée.'
+        : 'Après-midi : hydratez-vous régulièrement et privilégiez les espaces ombragés ou climatisés.';
+    }
+    return order === 1
+      ? 'Arrivez dès l\'ouverture pour visiter dans le calme et sans file d\'attente.'
+      : order === 2
+      ? 'Dégustez la spécialité artisanale du chef recommandée par les locaux.'
+      : 'Idéal à l\'heure dorée pour de superbes photos et une atmosphère apaisante.';
+  }
+
   private getCuratedPhoto(category: string, destination: string): string {
     const photosByCategory: Record<string, string> = {
       gastronomie: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80',
@@ -376,361 +440,244 @@ Retourne UNIQUEMENT l'objet JSON.`;
     return photosByCategory[category] || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800&auto=format&fit=crop&q=80';
   }
 
-  private generateMockPois(dto: GenerateTripDto): POI[] {
+  private async generateDynamicPois(dto: GenerateTripDto): Promise<POI[]> {
     const dest = dto.destination.toLowerCase().trim();
-    const cityCoords = this.getCityCoordinates(dto.destination);
+    const cityCoords = await this.resolveDestinationCoordinates(dto.destination);
     const interests = dto.interests && dto.interests.length > 0 ? dto.interests : ['culture', 'gastronomie'];
+    const activitiesPerDay = dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
+    const totalPoisCount = dto.duration_days * activitiesPerDay;
 
-    // Base de données de vrais lieux réels par ville
+    // Base exhaustive de vrais lieux réels et emblématiques par ville (19+ London, 15+ Abidjan, 12+ Paris, 7+ Tokyo, 4+ Rome, 4+ NYC, 4+ Marrakech)
     const curatedVenuesByCity: Record<string, Array<{ name: string; cat: string; desc: string; lat: number; lng: number; rating: number; reviews: number; tip: string; img: string }>> = {
-      paris: [
-        {
-          name: 'Café de Flore',
-          cat: 'gastronomie',
-          desc: 'Café littéraire mythique de Saint-Germain-des-Prés, repaire d\'artistes et intellectuels depuis 1887.',
-          lat: 48.8541,
-          lng: 2.3328,
-          rating: 4.8,
-          reviews: 2400,
-          tip: 'Dégustez leur fameux chocolat chaud à l\'ancienne servi dans son pot en argent.',
-          img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Musée du Louvre & Cour Carrée',
-          cat: 'culture',
-          desc: 'Le plus grand musée d\'art du monde abritant des chefs-d\'œuvre inestimables dans un palais royal.',
-          lat: 48.8606,
-          lng: 2.3376,
-          rating: 4.9,
-          reviews: 14200,
-          tip: 'Entrez par le Carrousel du Louvre pour éviter la longue file sous la pyramide principale.',
-          img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Jardin des Tuileries & Grand Bassin',
-          cat: 'nature',
-          desc: 'Magnifique parc à la française conçu par Le Nôtre, parfait pour une balade paisible entre sculptures et fontaines.',
-          lat: 48.8634,
-          lng: 2.3275,
-          rating: 4.7,
-          reviews: 5800,
-          tip: 'Profitez des célèbres chaises vertes inclinées au bord du grand bassin octogonal.',
-          img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Sainte-Chapelle & Île de la Cité',
-          cat: 'culture',
-          desc: 'Joyau de l\'architecture gothique rayonnante avec ses 1113 vitraux s\'élevant vers le ciel.',
-          lat: 48.8554,
-          lng: 2.3450,
-          rating: 4.9,
-          reviews: 8900,
-          tip: 'Visitez par temps clair en fin de matinée : la lumière à travers les vitraux est magique.',
-          img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Le Comptoir du Relais',
-          cat: 'gastronomie',
-          desc: 'Bistronomie d\'exception d\'Yves Camdeborde au cœur du quartier de l\'Odéon.',
-          lat: 48.8520,
-          lng: 2.3385,
-          rating: 4.7,
-          reviews: 3100,
-          tip: 'Arrivez dès 12h00 précises pour vous installer en terrasse sans réservation préalable.',
-          img: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Musée d\'Orsay & Grande Horloge',
-          cat: 'art',
-          desc: 'Ancienne gare ferroviaire monumentale transformée en temple mondial de l\'impressionnisme.',
-          lat: 48.8599,
-          lng: 2.3265,
-          rating: 4.9,
-          reviews: 11500,
-          tip: 'Montez au 5e étage : la verrière de l\'horloge géante offre un panorama exceptionnel sur la Seine.',
-          img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Montmartre & Place du Tertre',
-          cat: 'art',
-          desc: 'Village bohème perché sur la butte, berceau de Picasso, Renoir et des peintres de rue.',
-          lat: 48.8867,
-          lng: 2.3431,
-          rating: 4.8,
-          reviews: 9400,
-          tip: 'Prenez la rue de l\'Abreuvoir pour admirer la Maison Rose au coucher du soleil.',
-          img: 'https://images.unsplash.com/photo-1509439581779-6298f75bf6e5?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Septime Restaurant & Vins Naturels',
-          cat: 'gastronomie',
-          desc: 'Table gastronomique étoilée de Bertrand Grébaut, réputée pour sa créativité éco-responsable.',
-          lat: 48.8532,
-          lng: 2.3811,
-          rating: 4.9,
-          reviews: 4200,
-          tip: 'Accompagnez votre menu dégustation de l\'accord vins naturels sélectionnés par le sommelier.',
-          img: 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Atelier des Lumières',
-          cat: 'art',
-          desc: 'Centre d\'art numérique immersif projetant les chefs-d\'œuvre des plus grands artistes en musique.',
-          lat: 48.8617,
-          lng: 2.3789,
-          rating: 4.8,
-          reviews: 6700,
-          tip: 'Installez-vous au milieu du hall principal pour être entièrement enveloppé par les projections.',
-          img: 'https://images.unsplash.com/photo-1518998053901-5348d3961a04?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Pont Alexandre III & Rives de Seine',
-          cat: 'nightlife',
-          desc: 'Le pont le plus somptueux de Paris avec ses candélabres dorés et ses terrasses animées au bord de l\'eau.',
-          lat: 48.8638,
-          lng: 2.3134,
-          rating: 4.8,
-          reviews: 7300,
-          tip: 'Venez en début de soirée pour contempler la Tour Eiffel scintillante sur l\'eau.',
-          img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Le Marais & Place des Vosges',
-          cat: 'shopping',
-          desc: 'Quartier historique bordé d\'hôtels particuliers, de boutiques de créateurs et de galeries branchées.',
-          lat: 48.8555,
-          lng: 2.3654,
-          rating: 4.8,
-          reviews: 5100,
-          tip: 'Flânez sous les arcades de briques rouges de la plus ancienne place royale de Paris.',
-          img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Jardin du Luxembourg & Fontaine Médicis',
-          cat: 'bien_etre',
-          desc: 'Oasis de quiétude de 25 hectares prisée pour ses allées ombragées et sa fontaine romantique.',
-          lat: 48.8462,
-          lng: 2.3371,
-          rating: 4.8,
-          reviews: 6200,
-          tip: 'La fontaine Médicis à l\'ombre des platanes est l\'endroit le plus serein pour lire ou se détendre.',
-          img: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?w=800&auto=format&fit=crop&q=80',
-        },
-      ],
-      tokyo: [
-        {
-          name: 'Senso-ji Temple & Asakusa',
-          cat: 'culture',
-          desc: 'Le plus ancien temple bouddhiste de Tokyo avec sa porte Kaminarimon et sa lanterne rouge géante.',
-          lat: 35.7147,
-          lng: 139.7967,
-          rating: 4.8,
-          reviews: 15400,
-          tip: 'Tirez un oracle omikuji et goûtez les douceurs traditionnelles dans l\'allée Nakamise.',
-          img: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Tsukiji Outer Market',
-          cat: 'gastronomie',
-          desc: 'Marché gourmand historique réputé pour ses sashimis de thon rouge et ses échoppes de street food.',
-          lat: 35.6655,
-          lng: 139.7708,
-          rating: 4.7,
-          reviews: 8200,
-          tip: 'Dégustez un tamagoyaki chaud préparé à la minute devant vous par les maîtres artisans.',
-          img: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'teamLab Planets',
-          cat: 'art',
-          desc: 'Musée immersif multisensoriel où les visiteurs déambulent pieds nus dans des œuvres d\'art numériques vivantes.',
-          lat: 35.6491,
-          lng: 139.7898,
-          rating: 4.9,
-          reviews: 18000,
-          tip: 'Portez un pantalon qui peut être retroussé jusqu\'aux genoux pour la salle aquatique.',
-          img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Shibuya Sky & Croisement de Shibuya',
-          cat: 'nightlife',
-          desc: 'Observatoire panoramique à ciel ouvert à 229m d\'altitude au-dessus du croisement le plus célèbre du monde.',
-          lat: 35.6580,
-          lng: 139.7016,
-          rating: 4.9,
-          reviews: 12500,
-          tip: 'Réservez le créneau coucher de soleil : la vue sur Tokyo illuminé avec le mont Fuji en fond est grandiose.',
-          img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Meiji Jingu & Forêt Sacrée',
-          cat: 'nature',
-          desc: 'Sanctuaire shintoïste niché dans une forêt centenaire de 100 000 arbres au cœur de la métropole.',
-          lat: 35.6764,
-          lng: 139.6993,
-          rating: 4.8,
-          reviews: 9800,
-          tip: 'Écrivez votre vœu sur une tablette votive en bois (ema) sous les grands camphriers.',
-          img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Ginza Six & Ruelles Gourmandes',
-          cat: 'shopping',
-          desc: 'Temple du luxe et de l\'art de vivre tokyoïte avec jardin suspendu sur le toit.',
-          lat: 35.6698,
-          lng: 139.7640,
-          rating: 4.7,
-          reviews: 4900,
-          tip: 'Visitez l\'étage gastronomique au sous-sol pour des pâtisseries japonaises d\'orfèvre.',
-          img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80',
-        },
+      london: [
+        { name: 'British Museum & Great Court', cat: 'culture', desc: 'Trésors archéologiques mondiaux sous la spectaculaire verrière de Norman Foster.', lat: 51.5194, lng: -0.1270, rating: 4.9, reviews: 18500, tip: 'Admirez la Pierre de Rosette dès l\'ouverture à 10h pour éviter l\'affluence.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Borough Market & Gourmet Stalls', cat: 'gastronomie', desc: 'Le marché culinaire historique de Londres fondé au XIIIe siècle, paradis des gourmets.', lat: 51.5055, lng: -0.0910, rating: 4.8, reviews: 14200, tip: 'Goûtez le fameux sandwich au cheddar fermier chaud de Kappacasein.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Tower of London & Crown Jewels', cat: 'culture', desc: 'Forteresse royale millénaire gardant les Joyaux de la Couronne et protégée par les Yeomen Warders.', lat: 51.5081, lng: -0.0759, rating: 4.8, reviews: 16800, tip: 'Suivez la visite guidée d\'un Beefeater pour des anecdotes royales croustillantes.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Sky Garden & Walkie Talkie', cat: 'nature', desc: 'Jardin public suspendu au 35e étage offrant une vue panoramique à 360° sur la Tamise et Londres.', lat: 51.5112, lng: -0.0836, rating: 4.8, reviews: 11900, tip: 'Réservation gratuite en ligne obligatoire. Splendide au coucher du soleil.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Tate Modern & Millenium Bridge', cat: 'art', desc: 'Ancienne centrale électrique monumentale abritant la plus grande collection d\'art moderne d\'Europe.', lat: 51.5076, lng: -0.0994, rating: 4.7, reviews: 13100, tip: 'Traversez le Millenium Bridge depuis la cathédrale Saint-Paul pour une vue imprenable.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Dishoom Covent Garden', cat: 'gastronomie', desc: 'Hommage gastronomique vibrant aux cafés iranis de Bombay des années 1960.', lat: 51.5126, lng: -0.1260, rating: 4.8, reviews: 8700, tip: 'Ne manquez pas leur légendaire House Black Daal mijoté pendant plus de 24 heures.', img: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Covent Garden & Apple Market', cat: 'shopping', desc: 'Piazza piétonne animée avec spectacles de rue, boutiques de créateurs et arcades historiques.', lat: 51.5117, lng: -0.1232, rating: 4.7, reviews: 9500, tip: 'Assistez aux performances d\'opéra impromptues au sous-sol des halles.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Hyde Park & Serpentine Lake', cat: 'nature', desc: 'Le plus célèbre parc royal de Londres avec la Serpentine Gallery et les jardins commémoratifs de Diana.', lat: 51.5073, lng: -0.1657, rating: 4.8, reviews: 10400, tip: 'Louez une barque à rames sur la Serpentine pour une parenthèse bucolique.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Camden Market & Regent\'s Canal', cat: 'shopping', desc: 'Épicentre de la contre-culture londonienne regorgeant de mode vintage, street food et vinyles rares.', lat: 51.5414, lng: -0.1466, rating: 4.7, reviews: 15600, tip: 'Prenez une péniche traditionnelle le long du canal jusqu\'à Little Venice.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Soho & Ronnie Scott\'s Jazz Club', cat: 'nightlife', desc: 'Le temple mythique du jazz londonien où ont joué Miles Davis et Ella Fitzgerald.', lat: 51.5133, lng: -0.1311, rating: 4.8, reviews: 6200, tip: 'Réservez une table intime en salle pour la deuxième session de minuit.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Natural History Museum', cat: 'culture', desc: 'Cathédrale de la science abritant le squelette de la baleine bleue Hope dans le grand Hintze Hall.', lat: 51.4967, lng: -0.1764, rating: 4.9, reviews: 17200, tip: 'Entrée gratuite. Empruntez l\'escalator traversant la maquette géante du globe terrestre.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Big Ben & Westminster Abbey', cat: 'culture', desc: 'Les symboles royaux et parlementaires de l\'histoire britannique au bord de la Tamise.', lat: 51.5007, lng: -0.1246, rating: 4.9, reviews: 19800, tip: 'Traversez le pont de Westminster au crépuscule pour la silhouette dorée de Big Ben illuminée.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Cathédrale Saint-Paul de Londres', cat: 'culture', desc: 'Chef-d\'œuvre classique de Christopher Wren avec son dôme majestueux dominant la City.', lat: 51.5138, lng: -0.0984, rating: 4.8, reviews: 12400, tip: 'Montez à la Galerie des Murmures pour une acoustique fascinante.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Victoria and Albert Museum (V&A)', cat: 'art', desc: 'Le plus grand musée d\'art et de design au monde avec ses galeries de haute couture et bijoux.', lat: 51.4966, lng: -0.1722, rating: 4.8, reviews: 13900, tip: 'Prenez un thé dans le premier café de musée au monde conçu par William Morris.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'The Shard & Aqua Shard', cat: 'nightlife', desc: 'Plus haut gratte-ciel du Royaume-Uni offrant un panorama éblouissant sur les méandres de la Tamise.', lat: 51.5045, lng: -0.0865, rating: 4.7, reviews: 11200, tip: 'Sirotez un cocktail signature au 31e étage face aux lumières de Londres.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Regent\'s Park & Queen Mary\'s Gardens', cat: 'nature', desc: 'Parc royal somptueux abritant plus de 12 000 rosiers et un théâtre de plein air légendaire.', lat: 51.5313, lng: -0.1570, rating: 4.8, reviews: 8900, tip: 'Poussez jusqu\'au sommet de Primrose Hill pour l\'un des plus beaux panoramas de la capitale.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Leadenhall Market & Victorian Arcades', cat: 'gastronomie', desc: 'Marché couvert d\'époque victorienne aux dorures spectaculaires, célèbre pour ses pubs d\'affaires.', lat: 51.5127, lng: -0.0834, rating: 4.7, reviews: 7600, tip: 'Les fans reconnaîtront le décor du Chemin de Traverse dans Harry Potter.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Shoreditch Street Art & Boxpark', cat: 'art', desc: 'Épicentre branché de l\'East End orné de fresques murales signées Banksy et galeries indépendantes.', lat: 51.5235, lng: -0.0768, rating: 4.7, reviews: 8100, tip: 'Découvrez les friperies vintage et les concept-stores sous les conteneurs maritimes.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Harrods & Grand Food Hall', cat: 'shopping', desc: 'Grand magasin de luxe emblématique avec sa spectaculaire rotonde Art Nouveau et ses mets raffinés.', lat: 51.4994, lng: -0.1633, rating: 4.7, reviews: 14800, tip: 'Explorez la salle des thés et des chocolats pour des coffrets de collection uniques.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Royal Observatory Greenwich & Prime Meridian', cat: 'culture', desc: 'Le berceau du temps universel (GMT) où l\'on peut poser un pied dans l\'hémisphère Est et l\'autre à l\'Ouest.', lat: 51.4769, lng: 0.0005, rating: 4.8, reviews: 9200, tip: 'Profitez de la descente du grand parc de Greenwich pour embarquer sur le clipper Cutty Sark.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Notting Hill & Portobello Road Market', cat: 'shopping', desc: 'Quartier pastel célèbre pour son marché aux antiquités et ses maisons colorées de carte postale.', lat: 51.5155, lng: -0.2057, rating: 4.7, reviews: 12300, tip: 'Venez le samedi matin pour l\'ambiance maximale et les trouvailles vintage rares.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Kew Gardens & Palm House', cat: 'nature', desc: 'Jardins botaniques royaux classés UNESCO abritant la plus grande collection de plantes vivantes au monde.', lat: 51.4787, lng: -0.2955, rating: 4.8, reviews: 11600, tip: 'La serre victorienne Palm House transporte instantanément sous les tropiques.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Brick Lane & Curry Houses', cat: 'gastronomie', desc: 'Artère vibrante de l\'East End connue pour ses curry houses bengalis et ses bagels centenaires.', lat: 51.5220, lng: -0.0716, rating: 4.7, reviews: 9800, tip: 'Goûtez le bagel au saumon fumé du Beigel Bake ouvert 24h/24 depuis 1855.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Shakespeare\'s Globe Theatre', cat: 'art', desc: 'Reconstitution fidèle du théâtre élisabéthain à ciel ouvert sur les rives de la Tamise.', lat: 51.5081, lng: -0.0972, rating: 4.8, reviews: 7400, tip: 'Assistez à une représentation debout dans la cour pour vivre le théâtre comme au XVIe siècle.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Churchill War Rooms & Bunker Souterrain', cat: 'culture', desc: 'Le QG secret de Winston Churchill préservé intact sous les rues de Westminster.', lat: 51.5021, lng: -0.1290, rating: 4.8, reviews: 10800, tip: 'Louez l\'audioguide multimédia pour revivre les moments les plus intenses du Blitz.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
       ],
       abidjan: [
-        {
-          name: 'Cathédrale Saint-Paul du Plateau',
-          cat: 'culture',
-          desc: 'Chef-d\'œuvre architectural moderne surplombant la lagune Ébrié avec ses vitraux monumentaux.',
-          lat: 5.3283,
-          lng: -4.0195,
-          rating: 4.7,
-          reviews: 3200,
-          tip: 'Montez sur l\'esplanade pour une vue panoramique sur les gratte-ciels du Plateau et la lagune.',
-          img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Bushman Café & Galerie d\'Art',
-          cat: 'gastronomie',
-          desc: 'Hôtel-galerie d\'art contemporain africain, réputé pour sa cuisine fusion ivoirienne et ses cocktails d\'exception.',
-          lat: 5.3524,
-          lng: -3.9765,
-          rating: 4.8,
-          reviews: 2800,
-          tip: 'Installez-vous sur le toit-terrasse arboré pour déguster l\'aloco revisité et écouter du jazz.',
-          img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Parc National du Banco',
-          cat: 'nature',
-          desc: 'Forêt tropicale primaire de 3400 hectares préservée au cœur de la ville avec sentiers sous la canopée.',
-          lat: 5.3850,
-          lng: -4.0530,
-          rating: 4.6,
-          reviews: 1900,
-          tip: 'Louez un vélo à l\'entrée pour rejoindre l\'étang aux silures et l\'arboretum centenaire.',
-          img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Marché d\'Art de Cocody & Saint-Jean',
-          cat: 'shopping',
-          desc: 'Marché artisanal incontournable pour les masques baoulés, poteries et tissus pagnes traditionnels.',
-          lat: 5.3480,
-          lng: -4.0020,
-          rating: 4.6,
-          reviews: 2100,
-          tip: 'Prenez le temps d\'échanger avec les sculpteurs sur bois sur la signification des motifs traditionnels.',
-          img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80',
-        },
-        {
-          name: 'Grand-Bassam & Quartier France',
-          cat: 'culture',
-          desc: 'Ancienne capitale coloniale classée UNESCO, bordée par l\'océan Atlantique et ses galeries d\'artistes.',
-          lat: 5.2045,
-          lng: -3.7380,
-          rating: 4.8,
-          reviews: 4100,
-          tip: 'Dégustez un poisson braisé sauce kédjenou sur la plage face aux vagues de l\'Atlantique.',
-          img: 'https://images.unsplash.com/photo-1509439581779-6298f75bf6e5?w=800&auto=format&fit=crop&q=80',
-        },
+        { name: 'Cathédrale Saint-Paul du Plateau', cat: 'culture', desc: 'Chef-d\'œuvre architectural moderne surplombant la lagune Ébrié avec ses vitraux monumentaux.', lat: 5.3283, lng: -4.0195, rating: 4.7, reviews: 3200, tip: 'Montez sur l\'esplanade pour une vue panoramique sur les gratte-ciels du Plateau et la lagune.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Bushman Café & Galerie d\'Art', cat: 'gastronomie', desc: 'Hôtel-galerie d\'art contemporain africain, réputé pour sa cuisine fusion ivoirienne et ses cocktails d\'exception.', lat: 5.3524, lng: -3.9765, rating: 4.8, reviews: 2800, tip: 'Installez-vous sur le toit-terrasse arboré pour déguster l\'aloco revisité et écouter du jazz.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Parc National du Banco', cat: 'nature', desc: 'Forêt tropicale primaire de 3400 hectares préservée au cœur de la ville avec sentiers sous la canopée.', lat: 5.3850, lng: -4.0530, rating: 4.6, reviews: 1900, tip: 'Louez un vélo à l\'entrée pour rejoindre l\'étang aux silures et l\'arboretum centenaire.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Marché d\'Art de Cocody & Saint-Jean', cat: 'shopping', desc: 'Marché artisanal incontournable pour les masques baoulés, poteries et tissus pagnes traditionnels.', lat: 5.3480, lng: -4.0020, rating: 4.6, reviews: 2100, tip: 'Prenez le temps d\'échanger avec les sculpteurs sur bois sur la signification des motifs traditionnels.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Grand-Bassam & Quartier France', cat: 'culture', desc: 'Ancienne capitale coloniale classée UNESCO, bordée par l\'océan Atlantique et ses galeries d\'artistes.', lat: 5.2045, lng: -3.7380, rating: 4.8, reviews: 4100, tip: 'Dégustez un poisson braisé sauce kédjenou sur la plage face aux vagues de l\'Atlantique.', img: 'https://images.unsplash.com/photo-1509439581779-6298f75bf6e5?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Musée des Civilisations de Côte d\'Ivoire', cat: 'culture', desc: 'Riche collection de plus de 10 000 objets royaux, parures dorées et instruments sacrés.', lat: 5.3340, lng: -4.0175, rating: 4.7, reviews: 2400, tip: 'Demandez un guide conférencier pour comprendre la cosmogonie des peuples lagunaires.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Le Toit d\'Abidjan & Sofitel Hôtel Ivoire', cat: 'nightlife', desc: 'Restaurant gastronomique panoramique perché au sommet de la tour iconique surplombant Cocody.', lat: 5.3312, lng: -3.9980, rating: 4.9, reviews: 2100, tip: 'Idéal pour contempler le coucher de soleil sur les tours du Plateau en sirotant un cocktail.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Chez Ambroise & Maquis Traditionnel', cat: 'gastronomie', desc: 'Lieu mythique de Marcory pour déguster le meilleur poulet braisé et l\'attiéké frais.', lat: 5.3050, lng: -3.9920, rating: 4.7, reviews: 3600, tip: 'Accompagnez vos grillades d\'un piment frais écrasé et de bananes plantains frites.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Jardin Botanique de Bingerville', cat: 'nature', desc: 'Ancien parc colonial de 55 hectares arboré d\'essences tropicales rares et d\'allées royales de palmiers.', lat: 5.3590, lng: -3.8890, rating: 4.6, reviews: 1800, tip: 'Promenade idéale sous les arbres centenaires pour profiter d\'un air pur et ombragé.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Sanctuaire Marial d\'Attécoubé', cat: 'culture', desc: 'Édifice religieux moderne à l\'architecture audacieuse s\'élevant au-dessus de la baie lagonaire.', lat: 5.3550, lng: -4.0380, rating: 4.7, reviews: 1900, tip: 'Lieu de sérénité totale avec vue dominante spectaculaire sur tout le nord d\'Abidjan.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Marina de Biétry & Berges Lagunaires', cat: 'nature', desc: 'Cadre reposant en bordure d\'eau avec bateaux de plaisance et terrasses aérées.', lat: 5.2760, lng: -3.9850, rating: 4.7, reviews: 2200, tip: 'Superbe adresse pour un dîner au bord de l\'eau rafraîchi par la brise marine.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Allocodrome de Cocody & Ambiance Populaire', cat: 'gastronomie', desc: 'Rassemblement gourmand convivial où les cuisinières préparent bananes et poissons à la braise.', lat: 5.3450, lng: -3.9990, rating: 4.6, reviews: 3100, tip: 'Ambiance chaleureuse et authentique en soirée sous les manguiers.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Galerie Cécile Fakhoury', cat: 'art', desc: 'Galerie de renommée internationale dédiée à la promotion de l\'art contemporain africain.', lat: 5.3500, lng: -3.9850, rating: 4.8, reviews: 1400, tip: 'Découvrez les sculptures et toiles monumentales d\'artistes ivoiriens émergents.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Palais de la Culture Bernard Binlin-Dadié', cat: 'culture', desc: 'Grand complexe culturel de Treichville accueillant concerts, pièces de théâtre et danses traditionnelles.', lat: 5.3090, lng: -4.0120, rating: 4.6, reviews: 2700, tip: 'Consultez la programmation des spectacles musicaux au bord de la lagune.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Restaurant Saakan & Cuisine Raffinée', cat: 'gastronomie', desc: 'L\'un des plus beaux restaurants gastronomiques du Plateau sublimant les saveurs africaines.', lat: 5.3270, lng: -4.0180, rating: 4.8, reviews: 1800, tip: 'Goûtez leur souris d\'agneau au kédjenou et leur soufflé au chocolat de Côte d\'Ivoire.', img: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Île Boulay & Pirogues Traditionnelles', cat: 'nature', desc: 'Escapade lagunaire authentique sur une île de pêcheurs accessible uniquement en pirogue.', lat: 5.3100, lng: -4.0350, rating: 4.7, reviews: 1600, tip: 'Négociez une traversée en pirogue depuis Treichville pour une aventure locale inoubliable.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Mosquée de la Riviera Golf', cat: 'culture', desc: 'Édifice religieux aux lignes contemporaines et aux jardins intérieurs paisibles.', lat: 5.3580, lng: -3.9700, rating: 4.6, reviews: 1500, tip: 'L\'architecture intérieure mérite une visite respectueuse en dehors des heures de prière.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+      ],
+      paris: [
+        { name: 'Musée du Louvre & Cour Carrée', cat: 'culture', desc: 'Le plus grand musée d\'art du monde abritant des chefs-d\'œuvre inestimables dans un palais royal.', lat: 48.8606, lng: 2.3376, rating: 4.9, reviews: 18200, tip: 'Entrez par le Carrousel du Louvre pour éviter la longue file sous la pyramide principale.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Tour Eiffel & Champ-de-Mars', cat: 'culture', desc: 'La Dame de Fer emblématique dominant la Seine du haut de ses 330 mètres.', lat: 48.8584, lng: 2.2945, rating: 4.8, reviews: 24000, tip: 'Montez au deuxième étage par les escaliers pour une expérience sportive et sans attente.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Musée d\'Orsay & Grande Horloge', cat: 'art', desc: 'Ancienne gare ferroviaire monumentale transformée en temple mondial de l\'impressionnisme.', lat: 48.8599, lng: 2.3265, rating: 4.9, reviews: 14500, tip: 'Montez au 5e étage : la verrière de l\'horloge géante offre un panorama exceptionnel sur la Seine.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Café de Flore & Saint-Germain', cat: 'gastronomie', desc: 'Café littéraire mythique de Saint-Germain-des-Prés, repaire d\'artistes et intellectuels depuis 1887.', lat: 48.8541, lng: 2.3328, rating: 4.8, reviews: 4200, tip: 'Dégustez leur fameux chocolat chaud à l\'ancienne servi dans son pot en argent.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Jardin des Tuileries & Grand Bassin', cat: 'nature', desc: 'Magnifique parc à la française conçu par Le Nôtre, parfait pour une balade paisible entre sculptures et fontaines.', lat: 48.8634, lng: 2.3275, rating: 4.7, reviews: 7800, tip: 'Profitez des célèbres chaises vertes inclinées au bord du grand bassin octogonal.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Sainte-Chapelle & Île de la Cité', cat: 'culture', desc: 'Joyau de l\'architecture gothique rayonnante avec ses 1113 vitraux s\'élevant vers le ciel.', lat: 48.8554, lng: 2.3450, rating: 4.9, reviews: 9900, tip: 'Visitez par temps clair en fin de matinée : la lumière à travers les vitraux est magique.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Le Comptoir du Relais', cat: 'gastronomie', desc: 'Bistronomie d\'exception d\'Yves Camdeborde au cœur du quartier de l\'Odéon.', lat: 48.8520, lng: 2.3385, rating: 4.7, reviews: 3400, tip: 'Arrivez dès 12h00 précises pour vous installer en terrasse sans réservation préalable.', img: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Montmartre & Sacré-Cœur', cat: 'culture', desc: 'Village perché des peintres avec ses ruelles pavées et sa vue imprenable sur Paris.', lat: 48.8867, lng: 2.3431, rating: 4.8, reviews: 16700, tip: 'Prenez la rue de l\'Abreuvoir au lever du soleil pour une atmosphère hors du temps.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Centre Pompidou & Marais', cat: 'art', desc: 'Édifice architectural avant-gardiste abritant le musée national d\'Art moderne.', lat: 48.8606, lng: 2.3522, rating: 4.7, reviews: 11200, tip: 'Prenez la chenille d\'escalators extérieurs pour un panorama sensationnel sur les toits parisiens.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Jardin du Luxembourg & Fontaine Médicis', cat: 'nature', desc: 'Jardin à l\'italienne créé pour Marie de Médicis, orné de bassins et d\'orangers centenaires.', lat: 48.8462, lng: 2.3371, rating: 4.8, reviews: 8900, tip: 'La fontaine Médicis ombragée par les platanes est le coin le plus romantique du parc.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Place des Vosges & Maison de Victor Hugo', cat: 'culture', desc: 'La plus ancienne place royale de Paris bordée d\'arcades en briques rouges.', lat: 48.8556, lng: 2.3656, rating: 4.8, reviews: 7100, tip: 'Dégustez une glace artisanale sous les arcades ombragées.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Canal Saint-Martin & Passerelles Romantiques', cat: 'nature', desc: 'Voie d\'eau bucolique ombragée de marronniers avec écluses historiques et bars bohèmes.', lat: 48.8718, lng: 2.3662, rating: 4.7, reviews: 6200, tip: 'Idéal en fin d\'après-midi pour s\'asseoir au bord de l\'eau et regarder passer les bateaux.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Septime Restaurant & Vins Naturels', cat: 'gastronomie', desc: 'Table gastronomique étoilée de Bertrand Grébaut, réputée pour sa créativité éco-responsable.', lat: 48.8532, lng: 2.3811, rating: 4.9, reviews: 4200, tip: 'Accompagnez votre menu dégustation de l\'accord vins naturels sélectionnés par le sommelier.', img: 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Atelier des Lumières', cat: 'art', desc: 'Centre d\'art numérique immersif projetant les chefs-d\'œuvre des plus grands artistes en musique.', lat: 48.8617, lng: 2.3789, rating: 4.8, reviews: 6700, tip: 'Installez-vous au milieu du hall principal pour être entièrement enveloppé par les projections.', img: 'https://images.unsplash.com/photo-1518998053901-5348d3961a04?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Pont Alexandre III & Rives de Seine', cat: 'nightlife', desc: 'Le pont le plus somptueux de Paris avec ses candélabres dorés et ses terrasses animées au bord de l\'eau.', lat: 48.8638, lng: 2.3134, rating: 4.8, reviews: 7300, tip: 'Venez en début de soirée pour contempler la Tour Eiffel scintillante sur l\'eau.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Le Marais & Boutiques de Créateurs', cat: 'shopping', desc: 'Quartier historique bordé d\'hôtels particuliers, de boutiques de créateurs et de galeries branchées.', lat: 48.8555, lng: 2.3654, rating: 4.8, reviews: 5100, tip: 'Flânez dans la rue des Rosiers pour le meilleur falafel de Paris.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+      ],
+      tokyo: [
+        { name: 'Shibuya Crossing & Shibuya Sky', cat: 'nightlife', desc: 'Observatoire panoramique à 229m d\'altitude au-dessus du croisement le plus célèbre du monde.', lat: 35.6580, lng: 139.7016, rating: 4.9, reviews: 14500, tip: 'Réservez le créneau coucher de soleil : la vue sur Tokyo avec le mont Fuji est grandiose.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Senso-ji & Nakamise-dori', cat: 'culture', desc: 'Le plus vieux temple bouddhiste de Tokyo fondé en 645 au cœur du quartier d\'Asakusa.', lat: 35.7148, lng: 139.7967, rating: 4.8, reviews: 16900, tip: 'Passez sous la grande lanterne rouge Kaminarimon pour goûter les ningyo-yaki chauds.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Meiji Jingu & Forêt Sacrée', cat: 'nature', desc: 'Sanctuaire shintoïste niché dans une forêt centenaire de 100 000 arbres au cœur de la mégapole.', lat: 35.6764, lng: 139.6993, rating: 4.8, reviews: 11200, tip: 'Écrivez votre vœu sur une tablette votive en bois (ema) sous les grands camphriers.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'TeamLab Planets TOKYO', cat: 'art', desc: 'Musée d\'art immersif numérique géant où l\'on marche pieds nus dans l\'eau et la lumière.', lat: 35.6518, lng: 139.7897, rating: 4.9, reviews: 19800, tip: 'Portez un pantalon qui peut être retroussé jusqu\'aux genoux pour la salle aquatique.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Shinjuku Gyoen National Garden', cat: 'nature', desc: 'Oasis impériale combinant jardins à la française, à l\'anglaise et traditionnel japonais.', lat: 35.6852, lng: 139.7100, rating: 4.8, reviews: 9800, tip: 'Visitez la serre tropicale et le pavillon taïwanais au bord de l\'étang.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Tsukiji Outer Market & Sushi Bar', cat: 'gastronomie', desc: 'Ruelles animées bordées de centaines d\'échoppes servant poissons ultra-frais et brochettes.', lat: 35.6655, lng: 139.7708, rating: 4.8, reviews: 13400, tip: 'Savourez une omelette japonaise tamagoyaki tiède préparée sous vos yeux.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Ginza Six & Ruelles Gourmandes', cat: 'shopping', desc: 'Temple du luxe et de l\'art de vivre tokyoïte avec jardin suspendu sur le toit.', lat: 35.6698, lng: 139.7640, rating: 4.7, reviews: 6800, tip: 'Visitez l\'étage gastronomique au sous-sol pour des pâtisseries japonaises d\'orfèvre.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Akihabara Electric Town', cat: 'shopping', desc: 'Quartier mythique de l\'électronique, des mangas et de la culture otaku dans toute sa splendeur.', lat: 35.7023, lng: 139.7745, rating: 4.7, reviews: 11400, tip: 'Explorez les étages de figurines rares et retrogaming dans les buildings à plusieurs niveaux.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Roppongi Hills & Mori Art Museum', cat: 'art', desc: 'Complexe ultramoderne avec musée d\'art contemporain au 53e étage et vue à 360° sur Tokyo.', lat: 35.6605, lng: 139.7292, rating: 4.7, reviews: 8900, tip: 'Le Sky Deck en plein air au 54e étage est l\'un des secrets les mieux gardés de Tokyo.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Ramen Street & Tokyo Station', cat: 'gastronomie', desc: 'Galerie souterraine réunissant les meilleurs maîtres ramen du Japon sous le hall monumental de Tokyo Station.', lat: 35.6812, lng: 139.7671, rating: 4.8, reviews: 7600, tip: 'Goûtez le ramen tonkotsu chez Rokurinsha avec ses œufs mollets fondants.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+      ],
+      rome: [
+        { name: 'Colisée & Forum Romain', cat: 'culture', desc: 'L\'amphithéâtre mythique des gladiateurs et le centre politique de la Rome antique.', lat: 41.8902, lng: 12.4922, rating: 4.9, reviews: 22000, tip: 'Entrez tôt le matin par le Forum Romain pour éviter la file du Colisée.', img: 'https://images.unsplash.com/photo-1552832230-c0197dd311b5?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Fontaine de Trevi & Ruelles Baroques', cat: 'culture', desc: 'Chef-d\'œuvre monumental baroque où la tradition invite à jeter une pièce pour revenir à Rome.', lat: 41.9009, lng: 12.4833, rating: 4.8, reviews: 21000, tip: 'Venez avant 8h30 pour contempler l\'eau turquoise dans un silence magique.', img: 'https://images.unsplash.com/photo-1552832230-c0197dd311b5?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Panthéon de Rome & Piazza della Rotonda', cat: 'culture', desc: 'Temple romain antique bimillénaire surmonté de la plus grande coupole en béton non armé au monde.', lat: 41.8986, lng: 12.4769, rating: 4.9, reviews: 17500, tip: 'Levez les yeux vers l\'oculus central à midi : le faisceau solaire illumine le marbre.', img: 'https://images.unsplash.com/photo-1552832230-c0197dd311b5?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Trastevere & Osteria Tradizionale', cat: 'gastronomie', desc: 'Quartier pittoresque aux façades couleur ocre et trattorias familiales authentiques.', lat: 41.8890, lng: 12.4700, rating: 4.8, reviews: 11200, tip: 'Savourez une vraie pasta cacio e pepe accompagnée d\'un vin blanc des Castelli Romani.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Villa Borghese & Galerie Borghese', cat: 'art', desc: 'Parc romantique abritant un musée exceptionnel avec les sculptures du Bernin et les peintures du Caravage.', lat: 41.9142, lng: 12.4921, rating: 4.8, reviews: 9800, tip: 'Réservez impérativement en ligne, l\'accès est limité à 360 visiteurs par créneau de 2 heures.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Piazza Navona & Fontaine des Quatre-Fleuves', cat: 'art', desc: 'Place baroque grandiose ornée des fontaines magistrales du Bernin.', lat: 41.8992, lng: 12.4731, rating: 4.8, reviews: 14600, tip: 'Offrez-vous un tartufo glacé artisanal sur la place et admirez les artistes de rue.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Vatican & Chapelle Sixtine', cat: 'culture', desc: 'Le plus petit État du monde abritant les fresques de Michel-Ange et la basilique Saint-Pierre.', lat: 41.9022, lng: 12.4539, rating: 4.9, reviews: 24000, tip: 'Réservez le créneau d\'entrée matinale (7h15) pour une visite quasi privée des Musées du Vatican.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Campo de\' Fiori & Marché Matinal', cat: 'gastronomie', desc: 'Place animée accueillant chaque matin un marché coloré de fruits frais, fleurs et épices romaines.', lat: 41.8956, lng: 12.4722, rating: 4.7, reviews: 8700, tip: 'Goûtez les supplì (croquettes de riz à la mozzarella filante) au comptoir voisin.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+      ],
+      'new york': [
+        { name: 'Central Park & Bethesda Terrace', cat: 'nature', desc: 'Le poumon vert légendaire de Manhattan avec ses ponts en fonte et ses allées sous les ormes.', lat: 40.7829, lng: -73.9654, rating: 4.9, reviews: 26000, tip: 'Louez une barque au Loeb Boathouse pour une balade paisible sur le lac.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Metropolitan Museum of Art (The Met)', cat: 'art', desc: 'L\'un des plus grands musées du monde avec le temple égyptien de Dendour et ses collections royales.', lat: 40.7794, lng: -73.9632, rating: 4.9, reviews: 19400, tip: 'Montez sur le toit-terrasse (Cantor Rooftop) pour un verre face à la canopée de Central Park.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'High Line & Chelsea Market', cat: 'gastronomie', desc: 'Ancienne voie ferrée aérienne végétalisée reliant les galeries d\'art et les halles gourmandes.', lat: 40.7480, lng: -74.0048, rating: 4.8, reviews: 16200, tip: 'Prenez un lobster roll au Chelsea Market avant de vous promener le long de la High Line.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Top of the Rock & Rockefeller Center', cat: 'nightlife', desc: 'Panorama à 360° sur Manhattan avec vue directe imprenable sur l\'Empire State Building.', lat: 40.7587, lng: -73.9787, rating: 4.8, reviews: 15300, tip: 'Idéal au crépuscule pour voir s\'allumer simultanément des milliers de gratte-ciels.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Brooklyn Bridge & DUMBO', cat: 'culture', desc: 'Le pont suspendu iconique de 1883 offrant un panorama spectaculaire sur la skyline de Manhattan.', lat: 40.7061, lng: -73.9969, rating: 4.8, reviews: 18500, tip: 'Traversez à pied depuis Brooklyn pour la vue la plus instagrammable de New York.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Times Square & Broadway Shows', cat: 'nightlife', desc: 'L\'intersection la plus lumineuse et énergique du monde avec ses théâtres de Broadway.', lat: 40.7580, lng: -73.9855, rating: 4.7, reviews: 22000, tip: 'Achetez des billets à prix réduit au kiosque TKTS rouge le jour même du spectacle.', img: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Statue de la Liberté & Ellis Island', cat: 'culture', desc: 'Le monument emblématique de la liberté offert par la France en 1886, gardien de la baie.', lat: 40.6892, lng: -74.0445, rating: 4.9, reviews: 21000, tip: 'Réservez le ferry de 8h30 et l\'accès au piédestal pour éviter les foules.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'SoHo & Cast-Iron Architecture', cat: 'shopping', desc: 'Quartier emblématique aux façades en fonte abritant galeries d\'art et boutiques de créateurs.', lat: 40.7233, lng: -73.9985, rating: 4.7, reviews: 11600, tip: 'Explorez les cours intérieures cachées pour découvrir des concept stores confidentiels.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+      ],
+      marrakech: [
+        { name: 'Place Jemaa el-Fna & Médina Historique', cat: 'culture', desc: 'Cœur battant classé UNESCO avec charmeurs de serpents, conteurs, musiciens et étals d\'épices.', lat: 31.6258, lng: -7.9891, rating: 4.8, reviews: 15800, tip: 'Prenez un thé à la menthe sur une terrasse en surplomb au coucher du soleil.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Jardin Majorelle & Musée Yves Saint Laurent', cat: 'nature', desc: 'Oasis botanique d\'un bleu cobalt éclatant créée par Jacques Majorelle.', lat: 31.6418, lng: -7.9984, rating: 4.8, reviews: 14200, tip: 'Réservez votre billet en ligne à l\'avance pour le créneau de 9h00.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Palais de la Bahia & Jardins Intérieurs', cat: 'art', desc: 'Chef-d\'œuvre de l\'architecture marocaine avec ses plafonds en cèdre sculpté et patios fleuris.', lat: 31.6218, lng: -7.9818, rating: 4.7, reviews: 9800, tip: 'Admirez les zelliges raffinés et la cour d\'honneur baignée de lumière.', img: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Souk des Épices & Tanneries Traditionnelles', cat: 'shopping', desc: 'Labyrinthe aromatique regorgeant de safran, cumin, cuirs artisanaux et poteries.', lat: 31.6310, lng: -7.9850, rating: 4.6, reviews: 7600, tip: 'Prenez un brin de menthe fraîche lors de la traversée des tanneries.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Le Jardin Secret & Riad Historique', cat: 'nature', desc: 'Ancien riad restauré au cœur de la médina avec jardins luxuriants et fontaines murmurantes.', lat: 31.6305, lng: -7.9870, rating: 4.7, reviews: 6200, tip: 'Montez sur la tour pour un panorama unique sur la médina et l\'Atlas enneigé.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Tombeaux Saadiens & Mausolée Royal', cat: 'culture', desc: 'Nécropole royale du XVIe siècle redécouverte en 1917, ornée de marbre de Carrare et cèdre doré.', lat: 31.6194, lng: -7.9885, rating: 4.7, reviews: 8400, tip: 'Arrivez avant 9h30 pour profiter de la salle des Douze Colonnes sans cohue.', img: 'https://images.unsplash.com/photo-1549144511-f099e773c147?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Café Nomad & Rooftop Gastronomique', cat: 'gastronomie', desc: 'Restaurant-terrasse tendance servant une cuisine marocaine revisitée avec vue sur la médina.', lat: 31.6272, lng: -7.9878, rating: 4.8, reviews: 5400, tip: 'Savourez leur tagine d\'agneau aux pruneaux confits accompagné d\'un jus d\'orange pressé.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Hammam Mouassine & Rituel Traditionnel', cat: 'bien_etre', desc: 'Hammam traditionnel centenaire offrant gommage au savon noir et massage à l\'huile d\'argan.', lat: 31.6315, lng: -7.9912, rating: 4.8, reviews: 4800, tip: 'Réservez le forfait complet (gommage + masque au ghassoul + massage) pour une détente totale.', img: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?w=800&auto=format&fit=crop&q=80' },
       ],
     };
 
-    // Trouver si on a la ville en base
+    // 2. Recherche de correspondance dans le catalogue (bidirectionnelle)
     let candidateVenues: Array<{ name: string; cat: string; desc: string; lat: number; lng: number; rating: number; reviews: number; tip: string; img: string }> = [];
     for (const [key, list] of Object.entries(curatedVenuesByCity)) {
-      if (dest.includes(key)) {
-        candidateVenues = list;
+      if (dest.includes(key) || (dest.length >= 4 && key.includes(dest))) {
+        candidateVenues = [...list];
         break;
       }
     }
 
-    const pois: POI[] = [];
-    const activitiesPerDay = dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
+    // 3. Si la ville est hors catalogue ou a besoin de plus d'étapes uniques : Wikipedia Geosearch
+    if (candidateVenues.length < totalPoisCount) {
+      try {
+        const url = `https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${cityCoords.lat}|${cityCoords.lng}&gsradius=15000&gslimit=50&format=json`;
+        const res = await axios.get(url, {
+          headers: { 'User-Agent': 'VoyagoApp/2.0 (contact@voyago.app)' },
+          timeout: 4000,
+        });
+        const wikiPlaces = res.data?.query?.geosearch || [];
+        const existingNames = new Set(candidateVenues.map((v) => v.name.toLowerCase()));
 
-    if (candidateVenues.length > 0) {
-      // Filtrer et prioriser selon les intérêts de l'utilisateur
-      const prioritized = [...candidateVenues].sort((a, b) => {
-        const aMatch = interests.includes(a.cat) ? 1 : 0;
-        const bMatch = interests.includes(b.cat) ? 1 : 0;
-        return bMatch - aMatch;
-      });
-
-      let venueIndex = 0;
-      for (let day = 1; day <= dto.duration_days; day++) {
-        for (let order = 1; order <= activitiesPerDay; order++) {
-          const v = prioritized[venueIndex % prioritized.length];
-          venueIndex++;
-
-          pois.push({
-            name: v.name,
-            description: v.desc,
-            lat: v.lat + (order * 0.0005) - 0.001,
-            lng: v.lng - (order * 0.0005) + 0.001,
-            day,
-            order,
-            duration_minutes: order === 2 ? 60 : 90,
-            category: v.cat,
-            image_query: v.name,
-            image_url: v.img,
-            rating: v.rating,
-            reviews_count: v.reviews,
-            insider_tip: v.tip,
-          });
+        for (const wp of wikiPlaces) {
+          const title = wp.title;
+          if (
+            !existingNames.has(title.toLowerCase()) &&
+            !title.includes('List of') &&
+            !title.includes('Index of') &&
+            !title.includes('District') &&
+            !title.includes('railway station') &&
+            !title.includes('bus station')
+          ) {
+            const cat = interests[candidateVenues.length % interests.length] || 'culture';
+            candidateVenues.push({
+              name: title,
+              cat,
+              desc: `Lieu emblématique et patrimoine remarquable à découvrir lors de votre étape à ${dto.destination}.`,
+              lat: wp.lat,
+              lng: wp.lon,
+              rating: Number((4.6 + (candidateVenues.length % 4) * 0.1).toFixed(1)),
+              reviews: 1400 + (candidateVenues.length * 380) % 8500,
+              tip: `Conseil d'initié Voyago : prévoyez environ 1h30 pour profiter pleinement de ce lieu.`,
+              img: this.getCuratedPhoto(cat, dto.destination),
+            });
+            existingNames.add(title.toLowerCase());
+          }
         }
+      } catch (e) {
+        this.logger.warn(`Wikipedia Geosearch fallback error for ${dto.destination}: ${e.message}`);
       }
-      return pois;
     }
 
-    // Génération procédurale réaliste pour toute autre ville dans le monde
-    const templateActivities = [
-      { name: 'Centre Historique & Cité Ancienne', cat: 'culture', desc: `Découverte pédestre des ruelles emblématiques, de l'histoire locale et des monuments de ${dto.destination}.`, tip: 'Privilégiez la matinée pour arpenter les ruelles sans la foule.' },
-      { name: 'Bistrot du Marché & Saveurs Locales', cat: 'gastronomie', desc: `Immersion culinaire authentique dégustant les spécialités régionales et produits frais de saison de ${dto.destination}.`, tip: 'Demandez le plat du jour et les spécialités artisanales recommandées par le chef.' },
-      { name: 'Musée d\'Art & Patrimoine Régional', cat: 'art', desc: `Exploration des chefs-d\'œuvre artistiques et collections remarquables célébrant l\'identité de ${dto.destination}.`, tip: 'Consultez les expositions temporaires au dernier étage.' },
-      { name: 'Parc Botanique & Belvédère', cat: 'nature', desc: `Pause nature revigorante offrant un panorama exceptionnel sur toute la ville et ses environs.`, tip: 'Le coucher de soleil depuis le belvédère est le plus photogénique.' },
-      { name: 'Quartier des Créateurs & Boutiques Artisanales', cat: 'shopping', desc: `Flânerie dans le quartier bohème entre concept stores, ateliers d'artisans et galeries indépendantes.`, tip: 'Idéal pour dénicher des souvenirs artisanaux uniques introuvables ailleurs.' },
-      { name: 'Rooftop Bar & Lounge Panoramique', cat: 'nightlife', desc: `Soirée conviviale et raffinée avec cocktails signatures et ambiance musicale surplombant les lumières de ${dto.destination}.`, tip: 'Réservez une table en bordure de terrasse pour profiter pleinement de la vue nocturne.' },
-      { name: 'Bains & Espace Bien-Être Traditionnel', cat: 'bien_etre', desc: `Moment de relaxation profonde et de ressourcement dans un cadre serein inspiré des rituels traditionnels.`, tip: 'Profitez de la tisanerie relaxante après votre séance.' },
-    ];
-
-    // Trier les templates pour mettre en avant les intérêts de l'utilisateur
-    const sortedTemplates = [...templateActivities].sort((a, b) => {
+    // 4. Priorisation selon les intérêts du voyageur
+    const sortedVenues = [...candidateVenues].sort((a, b) => {
       const aMatch = interests.includes(a.cat) ? 1 : 0;
       const bMatch = interests.includes(b.cat) ? 1 : 0;
       return bMatch - aMatch;
     });
 
-    for (let day = 1; day <= dto.duration_days; day++) {
-      for (let order = 1; order <= activitiesPerDay; order++) {
-        const actIndex = ((day - 1) * activitiesPerDay + (order - 1)) % sortedTemplates.length;
-        const act = sortedTemplates[actIndex];
+    // 5. Thèmes quotidiens pour structurer un véritable voyage immersif
+    const dayThemes = [
+      'Cœur historique & incontournables',
+      'Art, culture & ruelles bohèmes',
+      'Gastronomie, marchés & parcs',
+      'Panoramas, architecture & shopping',
+      'Pépites secrètes & vie nocturne',
+      'Échappée verte & berges',
+      'Traditions & artisanat local',
+    ];
 
-        // Décalage GPS réaliste pour créer un véritable parcours sur la carte
-        const latOffset = (day * 0.005) + (order * 0.002) - 0.008;
-        const lngOffset = (day * 0.004) - (order * 0.003) + 0.005;
+    const pois: POI[] = [];
+    const usedNames = new Set<string>();
+    let venueIdx = 0;
+
+    for (let day = 1; day <= dto.duration_days; day++) {
+      const dayTheme = dayThemes[(day - 1) % dayThemes.length];
+      for (let order = 1; order <= activitiesPerDay; order++) {
+        // Trouver le prochain lieu disponible et non utilisé
+        let selected: { name: string; cat: string; desc: string; lat: number; lng: number; rating: number; reviews: number; tip: string; img: string } | null = null;
+        while (venueIdx < sortedVenues.length) {
+          const cand = sortedVenues[venueIdx++];
+          if (!usedNames.has(cand.name.toLowerCase())) {
+            selected = cand;
+            usedNames.add(cand.name.toLowerCase());
+            break;
+          }
+        }
+
+        // Si candidats épuisés, génération procédurale de découverte inédite géolocalisée
+        if (!selected) {
+          const cat = interests[(day + order) % interests.length] || 'culture';
+          const latOffset = (day * 0.005) + (order * 0.003) - 0.008;
+          const lngOffset = (day * 0.004) - (order * 0.003) + 0.006;
+          const stageName = `${dayTheme} · Étape ${order} à ${dto.destination}`;
+
+          selected = {
+            name: stageName,
+            cat,
+            desc: `Parcours thématique dédié à la découverte des trésors locaux et de l'ambiance authentique de ${dto.destination}.`,
+            lat: cityCoords.lat + latOffset,
+            lng: cityCoords.lng + lngOffset,
+            rating: Number((4.6 + ((day + order) % 4) * 0.1).toFixed(1)),
+            reviews: 1200 + ((day * 650 + order * 320) % 7500),
+            tip: this.getInsiderTipForThermal(dto.thermal_sensitivity, order),
+            img: this.getCuratedPhoto(cat, dto.destination),
+          };
+          usedNames.add(stageName.toLowerCase());
+        }
 
         pois.push({
-          name: `${act.name} (${dto.destination})`,
-          description: act.desc,
-          lat: cityCoords.lat + latOffset,
-          lng: cityCoords.lng + lngOffset,
+          name: selected.name,
+          description: selected.desc,
+          lat: selected.lat,
+          lng: selected.lng,
           day,
           order,
           duration_minutes: order === 2 ? 60 : 90,
-          category: act.cat,
-          image_query: `${dto.destination} ${act.name}`,
-          image_url: this.getCuratedPhoto(act.cat, dto.destination),
-          rating: Number((4.6 + ((day + order) % 4) * 0.1).toFixed(1)),
-          reviews_count: 1200 + ((day * 700 + order * 350) % 8000),
-          insider_tip: act.tip,
+          category: selected.cat,
+          image_query: selected.name,
+          image_url: selected.img,
+          rating: selected.rating,
+          reviews_count: selected.reviews,
+          insider_tip: selected.tip,
         });
       }
     }
