@@ -68,9 +68,10 @@ export class AiService {
       try {
         if (cleanKey.startsWith('sk-ant-oat')) {
           this.anthropic = new Anthropic({
+            apiKey: null as any,
             authToken: cleanKey,
           });
-          this.logger.log('Anthropic Claude client initialized with OAuth Token');
+          this.logger.log('Anthropic Claude client initialized with OAuth Token (Bearer auth)');
         } else {
           this.anthropic = new Anthropic({
             apiKey: cleanKey,
@@ -149,10 +150,11 @@ export class AiService {
 
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
     const modelsToTry = [
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
       'gemini-3.8-flash',
       'gemini-flash-latest',
       'gemini-3.7-flash',
-      'gemini-3.5-flash',
       'gemini-2.5-flash-lite',
     ];
 
@@ -243,9 +245,12 @@ Retourne UNIQUEMENT l'objet JSON.`;
     const totalPoisCount = dto.duration_days * activitiesPerDay;
 
     const modelsToTry = [
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5-20250929',
+      'claude-sonnet-5',
       'claude-3-5-sonnet-20241022',
       'claude-3-5-haiku-20241022',
-      'claude-3-haiku-20240307',
     ];
 
     const prompt = `Tu es Voyago, l'intelligence artificielle experte en voyages haut de gamme et guide local d'élite.

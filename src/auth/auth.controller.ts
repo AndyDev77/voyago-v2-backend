@@ -72,11 +72,26 @@ export class AuthController {
   }
 
   @Put('me')
-  @Patch('me')
-  @Put('profile')
-  @Patch('profile')
   @UseGuards(SessionAuthGuard)
   async updateMe(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateMe(user, dto);
+  }
+
+  @Patch('me')
+  @UseGuards(SessionAuthGuard)
+  async patchMe(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateMe(user, dto);
+  }
+
+  @Put('profile')
+  @UseGuards(SessionAuthGuard)
+  async updateProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
+    return this.authService.updateMe(user, dto);
+  }
+
+  @Patch('profile')
+  @UseGuards(SessionAuthGuard)
+  async patchProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
     return this.authService.updateMe(user, dto);
   }
 
