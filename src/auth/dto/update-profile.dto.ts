@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MaxLength } from 'class-validator';
+import { IsString, IsOptional, MaxLength, IsIn, IsBoolean } from 'class-validator';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -17,6 +17,20 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   date_of_birth?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['male', 'female', 'other', 'prefer_not_to_say'])
+  gender?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['cold', 'balanced', 'warm'])
+  thermal_sensitivity?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  onboarding_completed?: boolean;
 
   @IsOptional()
   @IsString()

@@ -122,6 +122,9 @@ export class AuthService {
       pseudo: dto.pseudo || null,
       avatar_emoji: dto.avatar_emoji || null,
       date_of_birth: dto.date_of_birth || null,
+      gender: 'prefer_not_to_say',
+      thermal_sensitivity: 'balanced',
+      onboarding_completed: false,
       country: dto.country || null,
       city: dto.city || null,
       password_hash,
@@ -359,6 +362,9 @@ export class AuthService {
     if (dto.pseudo !== undefined) updateFields.pseudo = dto.pseudo;
     if (dto.avatar_emoji !== undefined) updateFields.avatar_emoji = dto.avatar_emoji;
     if (dto.date_of_birth !== undefined) updateFields.date_of_birth = dto.date_of_birth;
+    if (dto.gender !== undefined) updateFields.gender = dto.gender;
+    if (dto.thermal_sensitivity !== undefined) updateFields.thermal_sensitivity = dto.thermal_sensitivity;
+    if (dto.onboarding_completed !== undefined) updateFields.onboarding_completed = dto.onboarding_completed;
     if (dto.country !== undefined) updateFields.country = dto.country;
     if (dto.city !== undefined) updateFields.city = dto.city;
     if (dto.picture !== undefined) updateFields.picture = dto.picture;

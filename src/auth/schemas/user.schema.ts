@@ -32,6 +32,15 @@ export class User {
   @Prop()
   date_of_birth: string;
 
+  @Prop({ enum: ['male', 'female', 'other', 'prefer_not_to_say'], default: 'prefer_not_to_say' })
+  gender: string;
+
+  @Prop({ enum: ['cold', 'balanced', 'warm'], default: 'balanced' })
+  thermal_sensitivity: string;
+
+  @Prop({ default: false })
+  onboarding_completed: boolean;
+
   @Prop()
   country: string;
 

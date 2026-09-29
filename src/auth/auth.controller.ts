@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Body,
   UseGuards,
   Req,
@@ -71,6 +72,9 @@ export class AuthController {
   }
 
   @Put('me')
+  @Patch('me')
+  @Put('profile')
+  @Patch('profile')
   @UseGuards(SessionAuthGuard)
   async updateMe(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
     return this.authService.updateMe(user, dto);

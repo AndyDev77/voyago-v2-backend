@@ -137,6 +137,16 @@ export class AiService {
     return { lat: 5.3600, lng: -4.0083 };
   }
 
+  private getThermalSensitivityNote(sensitivity?: string): string {
+    if (sensitivity === 'cold') {
+      return 'Frileux / Sensible au froid (privilégier les lieux abrités, cafés chaleureux, intérieurs cosy lors des journées fraîches, et adapter les conseils vestimentaires pour prévoir des couches bien chaudes)';
+    }
+    if (sensitivity === 'warm') {
+      return 'Chaleureux / Craint la chaleur (privilégier les lieux ombragés, espaces climatisés, parcs avec fontaines ou terrasses aérées aux heures chaudes, et vêtements légers / respirants)';
+    }
+    return 'Équilibré / Tempéré standard (confortable dans les conditions moyennes de saison)';
+  }
+
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
     const modelsToTry = [
       'gemini-3.8-flash',
@@ -163,6 +173,7 @@ PROFIL ET PRÉFÉRENCES DU VOYAGEUR :
 - Rythme souhaité : ${dto.pace} (${activitiesPerDay} activités sélectionnées par jour)
 - Mode de déplacement : ${dto.transports.join(', ')}
 - Budget : ${dto.budget}
+- Sensibilité thermique du voyageur : ${this.getThermalSensitivityNote(dto.thermal_sensitivity)}
 
 EXIGENCES D'AUTHENTICITÉ ET DE QUALITÉ :
 1. VRAIS LIEUX UNIQUEMENT : Propose de vrais établissements, monuments historiques célèbres, restaurants réputés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
@@ -171,7 +182,7 @@ EXIGENCES D'AUTHENTICITÉ ET DE QUALITÉ :
    - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée).
    - Les étapes d'un même jour doivent être géographiquement cohérentes (évite les traversées inutiles de la ville).
 4. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}). Alterne intelligemment entre culture, gastronomie, détente, art et nature.
-5. CONSEILS D'INITIÉ : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le meilleur plat ou cocktail à commander, le meilleur horaire pour éviter la foule, l'entrée dérobée, la vue secrète).
+5. CONSEILS D'INITIÉ ET ADAPTATION MÉTÉO/THERMIQUE : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le meilleur plat ou cocktail, astuce vestimentaire adaptée à sa sensibilité thermique ${dto.thermal_sensitivity || 'équilibrée'}, horaire idéal pour éviter la foule).
 6. STATS & NOTATION :
    - rating : note réaliste entre 4.4 et 4.9
    - reviews_count : nombre d'avis réels entre 850 et 24000
@@ -251,6 +262,7 @@ PROFIL ET PRÉFÉRENCES DU VOYAGEUR :
 - Rythme souhaité : ${dto.pace} (${activitiesPerDay} activités sélectionnées par jour)
 - Mode de déplacement : ${dto.transports.join(', ')}
 - Budget : ${dto.budget}
+- Sensibilité thermique du voyageur : ${this.getThermalSensitivityNote(dto.thermal_sensitivity)}
 
 EXIGENCES D'AUTHENTICITÉ ET DE QUALITÉ :
 1. VRAIS LIEUX UNIQUEMENT : Propose de vrais établissements, monuments historiques célèbres, restaurants réputés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
@@ -259,7 +271,7 @@ EXIGENCES D'AUTHENTICITÉ ET DE QUALITÉ :
    - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée).
    - Les étapes d'un même jour doivent être géographiquement cohérentes.
 4. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}).
-5. CONSEILS D'INITIÉ : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français.
+5. CONSEILS D'INITIÉ ET ADAPTATION THERMIQUE : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (en tenant compte de sa sensibilité ${dto.thermal_sensitivity || 'équilibrée'} pour l'habillement et le confort).
 6. STATS & NOTATION :
    - rating : note réaliste entre 4.4 et 4.9
    - reviews_count : nombre d'avis réels entre 850 et 24000

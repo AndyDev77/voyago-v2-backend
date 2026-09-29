@@ -158,7 +158,11 @@ export class TripsService {
     this.logger.log(`Generating trip for user ${user.user_id} (${user.name}) in ${dto.destination} [tenant: ${tenantId}]`);
 
     // 1. Generate POIs with AI (Gemini or Claude with smart fallback)
-    const rawPois = await this.aiService.generatePois(dto);
+    const tripDto: GenerateTripDto = {
+      ...dto,
+      thermal_sensitivity: dto.thermal_sensitivity || user.thermal_sensitivity || 'balanced',
+    };
+    const rawPois = await this.aiService.generatePois(tripDto);
 
     // 2. Fetch Wikipedia images and weather in parallel for top performance
     const firstValidPoi = rawPois.find((p) => p.lat !== 0 && p.lng !== 0);
