@@ -36,10 +36,12 @@ export class CommunityService {
 
     const userMap = new Map(users.map((u) => [u.user_id, u]));
 
-    return trips.map((trip) => {
+    return trips.map((trip: any) => {
       const author = userMap.get(trip.user_id);
+      const cover = trip.cover_image_url || trip.pois?.[0]?.image_url || null;
       return {
         ...trip,
+        cover_image_url: cover,
         author: author
           ? {
               user_id: author.user_id,

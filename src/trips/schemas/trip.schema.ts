@@ -70,6 +70,9 @@ export class Trip {
   country?: string;
 
   @Prop({ required: false })
+  cover_image_url?: string;
+
+  @Prop({ required: false })
   country_code?: string;
 
   @Prop({ required: false })

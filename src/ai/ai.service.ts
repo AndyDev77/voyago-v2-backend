@@ -242,8 +242,11 @@ ${dateContext}
 - Sensibilité thermique du voyageur : ${this.getThermalSensitivityNote(dto.thermal_sensitivity)}
 
 EXIGENCES D'OPTIMISATION ET D'AUTHENTICITÉ :
-1. VRAIS ÉTABLISSEMENTS ET MONUMENTS : Propose de vrais établissements, monuments historiques célèbres, restaurants renommés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
-2. COORDONNÉES GPS RÉELLES ET EXACTES : Chaque lieu doit comporter sa latitude ('lat') et longitude ('lng') réelles et précises dans la ville de ${dto.destination}.
+1. ÉDIFICE ET MONUMENT HISTORIQUE EMBLÉMATIQUE (PRIORITÉ ABSOLUE) :
+   Le tout premier lieu du séjour (Jour 1, order: 1) DOIT OBLIGATOIREMENT ÊTRE l'édifice architectural, le monument historique ou la merveille emblématique majeure du pays/destination (ex: pour la Grèce : Le Parthénon / L'Acropole d'Athènes ; pour la Guinée : Le Palais du Peuple ou la Grande Mosquée Fayçal de Conakry ; pour la Côte d'Ivoire : La Cathédrale Saint-Paul du Plateau ou la Basilique de Yamoussoukro ; pour la France : La Tour Eiffel ; pour l'Italie : Le Colisée).
+   Son 'image_query' doit être le nom officiel en anglais ou universel de cet édifice pour la recherche photo (ex: "Parthenon Athens", "Palais du Peuple Conakry", "Cathedrale Saint-Paul Abidjan").
+2. VRAIS ÉTABLISSEMENTS ET MONUMENTS : Propose de vrais établissements, monuments historiques célèbres, restaurants renommés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
+3. COORDONNÉES GPS RÉELLES ET EXACTES : Chaque lieu doit comporter sa latitude ('lat') et longitude ('lng') réelles et précises dans la ville de ${dto.destination}.
 3. CLUSTERING GÉOGRAPHIQUE PAR JOURNÉE (ZÉRO TRAJET INUTILE) :
    - Pour chaque jour, TOUS les POIs doivent être situés dans un même quartier ou secteur proche (ex: à Paris : Jour 1 dans Le Marais / Île de la Cité, Jour 2 à Montmartre ; à Tokyo : Jour 1 à Shibuya / Harajuku, Jour 2 à Asakusa / Ueno).
    - Les étapes d'une même journée s'enchaînent logiquement à pied ou en court trajet selon le transport choisi (${dto.transports.join(', ')}).
@@ -280,10 +283,12 @@ Retourne UNIQUEMENT l'objet JSON.`;
 
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
     const modelsToTry = [
+      'gemini-3.5-flash-lite',
+      'gemini-3.5-flash',
+      'gemini-flash-lite-latest',
       'gemini-flash-latest',
       'gemini-3.7-flash',
       'gemini-3.8-flash',
-      'gemini-3.5-flash',
       'gemini-pro-latest',
     ];
 
@@ -384,7 +389,7 @@ Retourne UNIQUEMENT l'objet JSON.`;
         duration_minutes: typeof p.duration_minutes === 'number' ? p.duration_minutes : 90,
         category: cat,
         image_query: p.image_query || p.name || dto.destination,
-        image_url: p.image_url || this.getCuratedPhoto(cat, dto.destination),
+        image_url: p.image_url || null,
         rating: typeof p.rating === 'number' ? p.rating : 4.8,
         reviews_count: typeof p.reviews_count === 'number' ? p.reviews_count : 2400,
         insider_tip: p.insider_tip || `Conseil Voyago : arrivez tôt le matin pour savourer le lieu au calme.`,
@@ -414,18 +419,10 @@ Retourne UNIQUEMENT l'objet JSON.`;
       : 'Idéal à l\'heure dorée pour de superbes photos et une atmosphère apaisante.';
   }
 
-  private getCuratedPhoto(category: string, destination: string): string {
-    const photosByCategory: Record<string, string> = {
-      gastronomie: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80',
-      culture: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80',
-      art: 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=800&auto=format&fit=crop&q=80',
-      nature: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80',
-      nightlife: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=800&auto=format&fit=crop&q=80',
-      bien_etre: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?w=800&auto=format&fit=crop&q=80',
-      shopping: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80',
-      architecture: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800&auto=format&fit=crop&q=80',
-    };
-    return photosByCategory[category] || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800&auto=format&fit=crop&q=80';
+  getCuratedPhoto(category: string, destination: string): string {
+    const cleanDest = (destination || 'travel').trim();
+    const cleanCat = (category || 'landmark').trim();
+    return `https://images.unsplash.com/featured/?${encodeURIComponent(cleanDest)},${encodeURIComponent(cleanCat)}`;
   }
 
   private async generateDynamicPois(dto: GenerateTripDto): Promise<POI[]> {
@@ -465,7 +462,7 @@ Retourne UNIQUEMENT l'objet JSON.`;
         { name: 'Churchill War Rooms & Bunker Souterrain', cat: 'culture', desc: 'Le QG secret de Winston Churchill préservé intact sous les rues de Westminster.', lat: 51.5021, lng: -0.1290, rating: 4.8, reviews: 10800, tip: 'Louez l\'audioguide multimédia pour revivre les moments les plus intenses du Blitz.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
       ],
       abidjan: [
-        { name: 'Cathédrale Saint-Paul du Plateau', cat: 'culture', desc: 'Chef-d\'œuvre architectural moderne surplombant la lagune Ébrié avec ses vitraux monumentaux.', lat: 5.3283, lng: -4.0195, rating: 4.7, reviews: 3200, tip: 'Montez sur l\'esplanade pour une vue panoramique sur les gratte-ciels du Plateau et la lagune.', img: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=800&auto=format&fit=crop&q=80' },
+        { name: 'Cathédrale Saint-Paul du Plateau', cat: 'culture', desc: 'Chef-d\'œuvre architectural moderne surplombant la lagune Ébrié avec ses vitraux monumentaux.', lat: 5.3283, lng: -4.0195, rating: 4.7, reviews: 3200, tip: 'Montez sur l\'esplanade pour une vue panoramique sur les gratte-ciels du Plateau et la lagune.', img: 'https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d1/La_cath%C3%A9drale_Saint-Paul_Abidjan_03.jpg/1280px-La_cath%C3%A9drale_Saint-Paul_Abidjan_03.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail' },
         { name: 'Bushman Café & Galerie d\'Art', cat: 'gastronomie', desc: 'Hôtel-galerie d\'art contemporain africain, réputé pour sa cuisine fusion ivoirienne et ses cocktails d\'exception.', lat: 5.3524, lng: -3.9765, rating: 4.8, reviews: 2800, tip: 'Installez-vous sur le toit-terrasse arboré pour déguster l\'aloco revisité et écouter du jazz.', img: 'https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?w=800&auto=format&fit=crop&q=80' },
         { name: 'Parc National du Banco', cat: 'nature', desc: 'Forêt tropicale primaire de 3400 hectares préservée au cœur de la ville avec sentiers sous la canopée.', lat: 5.3850, lng: -4.0530, rating: 4.6, reviews: 1900, tip: 'Louez un vélo à l\'entrée pour rejoindre l\'étang aux silures et l\'arboretum centenaire.', img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&auto=format&fit=crop&q=80' },
         { name: 'Marché d\'Art de Cocody & Saint-Jean', cat: 'shopping', desc: 'Marché artisanal incontournable pour les masques baoulés, poteries et tissus pagnes traditionnels.', lat: 5.3480, lng: -4.0020, rating: 4.6, reviews: 2100, tip: 'Prenez le temps d\'échanger avec les sculpteurs sur bois sur la signification des motifs traditionnels.', img: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80' },
@@ -661,8 +658,8 @@ Retourne UNIQUEMENT l'objet JSON.`;
           order,
           duration_minutes: order === 2 ? 60 : 90,
           category: selected.cat,
-          image_query: selected.name,
-          image_url: selected.img,
+          image_query: `${selected.name} ${dto.destination}`,
+          image_url: null,
           rating: selected.rating,
           reviews_count: selected.reviews,
           insider_tip: selected.tip,
@@ -674,8 +671,129 @@ Retourne UNIQUEMENT l'objet JSON.`;
   }
 
 
-  async fetchWikipediaImage(imageQuery: string): Promise<string | null> {
+  /**
+   * Résout DYNAMIQUEMENT par l'IA le monument, l'édifice ou le paysage emblématique
+   * de n'importe quelle ville ou pays dans le monde, 100% généré sans liste statique.
+   */
+  async resolveCountryMonument(
+    destination: string,
+    country?: string,
+    city?: string,
+  ): Promise<{ monumentName: string; query: string; imageUrl: string }> {
+    let monumentName = `${destination} Landmark`;
+    let query = `${destination} landmark`;
+    let cityQuery = `${city || destination} landmark`;
+
+    // 1. Découverte 100% DYNAMIQUE par l'IA (Gemini Flash)
+    if (this.genAI) {
+      const modelsToTry = [
+        'gemini-3.5-flash-lite',
+        'gemini-3.5-flash',
+        'gemini-flash-lite-latest',
+        'gemini-flash-latest',
+      ];
+
+      for (const modelName of modelsToTry) {
+        try {
+          const model = this.genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: { responseMimeType: 'application/json' },
+          });
+
+          const prompt = `Tu es un expert mondial en géographie, architecture et patrimoine mondial.
+Pour la destination "${destination}" (Pays: "${country || ''}", Ville: "${city || ''}"):
+Identifie l'édifice architectural, le monument historique ou la merveille emblématique absolue de cette ville / ce pays.
+Réponds STRICTEMENT en JSON :
+{
+  "monument_name": "Nom officiel du monument ou édifice en français",
+  "search_query": "English landmark search query for Wikimedia Commons photo search (ex: 'Parthenon Athens', 'Sacred Heart Cathedral Lome', 'Palais du Peuple Conakry')",
+  "city_query": "Alternative city landmark query in English"
+}`;
+
+          const res = await model.generateContent(prompt);
+          const parsed = JSON.parse(res.response.text());
+          if (parsed.monument_name && parsed.search_query) {
+            monumentName = parsed.monument_name;
+            query = parsed.search_query;
+            if (parsed.city_query) cityQuery = parsed.city_query;
+            this.logger.log(
+              `AI discovered monument for ${destination}: "${monumentName}" (search query: "${query}")`,
+            );
+            break;
+          }
+        } catch (err) {
+          this.logger.warn(`AI monument discovery model ${modelName} error: ${err.message}`);
+        }
+      }
+    }
+
+    // 2. Recherche automatique et dynamique de la photo haute résolution sur Wikimedia Commons
+    // Essai 1 : query précise du monument trouvée par l'IA
+    let fetchedImg = await this.fetchWikipediaImage(query);
+
+    // Essai 2 : query de la ville / édifice alternatif si non trouvé
+    if (!fetchedImg && cityQuery) {
+      fetchedImg = await this.fetchWikipediaImage(cityQuery);
+    }
+
+    // Essai 3 : query avec le nom officiel français
+    if (!fetchedImg && monumentName) {
+      fetchedImg = await this.fetchWikipediaImage(monumentName);
+    }
+
+    // Essai 4 : query générale destination
+    if (!fetchedImg) {
+      fetchedImg = await this.fetchWikipediaImage(`${destination} landmark`);
+    }
+
+    if (fetchedImg) {
+      return {
+        monumentName,
+        query,
+        imageUrl: fetchedImg,
+      };
+    }
+
+    // Fallback dynamique haute qualité ciblé sur la destination
+    return {
+      monumentName,
+      query,
+      imageUrl: `https://images.unsplash.com/featured/?${encodeURIComponent(destination)},landmark`,
+    };
+  }
+
+  async fetchWikipediaImage(imageQuery: string, fallbackUrl?: string): Promise<string | null> {
     try {
+      // 1. Essai prioritaire Wikimedia Commons (Photos de monuments en haute définition)
+      const commonsUrl = 'https://commons.wikimedia.org/w/api.php';
+      const commonsRes = await axios.get(commonsUrl, {
+        params: {
+          action: 'query',
+          generator: 'search',
+          gsrnamespace: 6,
+          gsrsearch: imageQuery,
+          gsrlimit: 1,
+          prop: 'imageinfo',
+          iiprop: 'url',
+          iiurlwidth: 1200,
+          format: 'json',
+        },
+        headers: { 'User-Agent': 'VoyagoApp/2.0 (contact@voyago.app)' },
+        timeout: 3500,
+      });
+
+      const pages = commonsRes.data?.query?.pages;
+      if (pages) {
+        const firstPage = Object.values(pages)[0] as any;
+        const img = firstPage?.imageinfo?.[0]?.thumburl || firstPage?.imageinfo?.[0]?.url;
+        if (img && typeof img === 'string' && img.startsWith('http')) {
+          return img;
+        }
+      }
+    } catch (_) {}
+
+    try {
+      // 2. Essai Wikipédia Anglais
       const searchResponse = await axios.get('https://en.wikipedia.org/w/api.php', {
         params: {
           action: 'opensearch',
@@ -683,34 +801,72 @@ Retourne UNIQUEMENT l'objet JSON.`;
           limit: 1,
           format: 'json',
         },
+        headers: { 'User-Agent': 'VoyagoApp/2.0 (contact@voyago.app)' },
         timeout: 3000,
       });
 
       const titles: string[] = searchResponse.data[1];
-      if (!titles || titles.length === 0) {
-        return this.getCuratedPhoto('culture', imageQuery);
-      }
+      if (titles && titles.length > 0) {
+        const pageResponse = await axios.get('https://en.wikipedia.org/w/api.php', {
+          params: {
+            action: 'query',
+            titles: titles[0],
+            prop: 'pageimages',
+            format: 'json',
+            pithumbsize: 1000,
+          },
+          headers: { 'User-Agent': 'VoyagoApp/2.0 (contact@voyago.app)' },
+          timeout: 3000,
+        });
 
-      const title = titles[0];
-      const pageResponse = await axios.get('https://en.wikipedia.org/w/api.php', {
+        const pages = pageResponse.data?.query?.pages;
+        if (pages) {
+          const page = Object.values(pages)[0] as any;
+          if (page?.thumbnail?.source) {
+            return page.thumbnail.source;
+          }
+        }
+      }
+    } catch (_) {}
+
+    try {
+      // 3. Essai Wikipédia Français
+      const frSearch = await axios.get('https://fr.wikipedia.org/w/api.php', {
         params: {
-          action: 'query',
-          titles: title,
-          prop: 'pageimages',
+          action: 'opensearch',
+          search: imageQuery,
+          limit: 1,
           format: 'json',
-          pithumbsize: 600,
         },
+        headers: { 'User-Agent': 'VoyagoApp/2.0 (contact@voyago.app)' },
         timeout: 3000,
       });
 
-      const pages = pageResponse.data?.query?.pages;
-      if (!pages) return this.getCuratedPhoto('culture', imageQuery);
+      const frTitles: string[] = frSearch.data[1];
+      if (frTitles && frTitles.length > 0) {
+        const frPage = await axios.get('https://fr.wikipedia.org/w/api.php', {
+          params: {
+            action: 'query',
+            titles: frTitles[0],
+            prop: 'pageimages',
+            format: 'json',
+            pithumbsize: 1000,
+          },
+          headers: { 'User-Agent': 'VoyagoApp/2.0 (contact@voyago.app)' },
+          timeout: 3000,
+        });
 
-      const page = Object.values(pages)[0] as any;
-      return page?.thumbnail?.source || this.getCuratedPhoto('culture', imageQuery);
-    } catch {
-      return this.getCuratedPhoto('culture', imageQuery);
-    }
+        const frPages = frPage.data?.query?.pages;
+        if (frPages) {
+          const page = Object.values(frPages)[0] as any;
+          if (page?.thumbnail?.source) {
+            return page.thumbnail.source;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return fallbackUrl || this.getCuratedPhoto('culture', imageQuery);
   }
 
   async fetchWeather(lat: number, lng: number, durationDays: number, startDate?: string): Promise<DayWeather[]> {

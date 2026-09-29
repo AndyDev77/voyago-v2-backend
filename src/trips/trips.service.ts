@@ -63,10 +63,46 @@ export class TripsService {
       }
     }
 
-    return trips;
+    // Assurer que chaque voyage affiche l'édifice / monument réel de son pays
+    const verifiedTrips = await Promise.all(
+      trips.map(async (t) => {
+        const tripObj = t.toObject ? t.toObject() : t;
+        const isParisBridge =
+          tripObj.pois?.[0]?.image_url?.includes('photo-1499856871958-5b9627545d1a') ||
+          tripObj.cover_image_url?.includes('photo-1499856871958-5b9627545d1a');
+        const isNotParis = !tripObj.destination?.toLowerCase().includes('paris');
+        const lacksCover = !tripObj.cover_image_url || tripObj.cover_image_url.trim() === '';
+
+        if ((isParisBridge && isNotParis) || lacksCover) {
+          try {
+            const monument = await this.aiService.resolveCountryMonument(
+              tripObj.destination,
+              tripObj.country,
+              tripObj.city,
+            );
+            tripObj.cover_image_url = monument.imageUrl;
+            if (tripObj.pois && tripObj.pois.length > 0) {
+              if (isParisBridge || !tripObj.pois[0].image_url) {
+                tripObj.pois[0].image_url = monument.imageUrl;
+              }
+            }
+            TripModel.updateOne(
+              { id: tripObj.id },
+              { $set: { cover_image_url: monument.imageUrl, 'pois.0.image_url': monument.imageUrl } },
+            ).exec().catch(() => {});
+          } catch (_) {}
+        }
+        return tripObj;
+      }),
+    );
+
+    return verifiedTrips;
   }
 
   async getTripById(trip_id: string, user_id?: string): Promise<Trip> {
+    let trip: any = null;
+    let model: any = null;
+
     // If we have a user_id, look in their tenant DB first
     if (user_id) {
       const TripModel = await this.tenancyService.getTenantModel<TripDocument>(
@@ -74,16 +110,50 @@ export class TripsService {
         'Trip',
         TripSchema,
       );
-      const trip = await TripModel.findOne({ id: trip_id }).exec();
-      if (trip) return trip;
+      model = TripModel;
+      trip = await TripModel.findOne({ id: trip_id }).exec();
     }
 
     // Fallback: look in shared DB (for community/public trips)
-    const trip = await this.sharedTripModel.findOne({ id: trip_id }).exec();
+    if (!trip) {
+      model = this.sharedTripModel;
+      trip = await this.sharedTripModel.findOne({ id: trip_id }).exec();
+    }
+
     if (!trip) {
       throw new NotFoundException(`Trip ${trip_id} not found`);
     }
-    return trip;
+
+    const tripObj = trip.toObject ? trip.toObject() : trip;
+    const isParisBridge =
+      tripObj.pois?.[0]?.image_url?.includes('photo-1499856871958-5b9627545d1a') ||
+      tripObj.cover_image_url?.includes('photo-1499856871958-5b9627545d1a');
+    const isNotParis = !tripObj.destination?.toLowerCase().includes('paris');
+    const lacksCover = !tripObj.cover_image_url || tripObj.cover_image_url.trim() === '';
+
+    if ((isParisBridge && isNotParis) || lacksCover) {
+      try {
+        const monument = await this.aiService.resolveCountryMonument(
+          tripObj.destination,
+          tripObj.country,
+          tripObj.city,
+        );
+        tripObj.cover_image_url = monument.imageUrl;
+        if (tripObj.pois && tripObj.pois.length > 0) {
+          if (isParisBridge || !tripObj.pois[0].image_url) {
+            tripObj.pois[0].image_url = monument.imageUrl;
+          }
+        }
+        if (model) {
+          model.updateOne(
+            { id: trip_id },
+            { $set: { cover_image_url: monument.imageUrl, 'pois.0.image_url': monument.imageUrl } },
+          ).exec().catch(() => {});
+        }
+      } catch (_) {}
+    }
+
+    return tripObj;
   }
 
   private async awardBadges(ProfileModel: Model<any>, profile: any): Promise<void> {
@@ -164,16 +234,46 @@ export class TripsService {
     };
     const rawPois = await this.aiService.generatePois(tripDto);
 
-    // 2. Fetch Wikipedia images and weather in parallel for top performance
+    // 2. Résoudre le monument ou l'édifice emblématique du pays via IA & Wikimedia
+    const parts = dto.destination.split(',').map((s) => s.trim());
+    const derivedCity = dto.city || (parts.length > 0 ? parts[0] : dto.destination);
+    const derivedCountry = dto.country || (parts.length > 1 ? parts.slice(1).join(', ') : undefined);
+
+    const monument = await this.aiService.resolveCountryMonument(
+      dto.destination,
+      derivedCountry,
+      derivedCity,
+    );
+
     const firstValidPoi = rawPois.find((p) => p.lat !== 0 && p.lng !== 0);
     const lat = firstValidPoi?.lat ?? 48.8566;
     const lng = firstValidPoi?.lng ?? 2.3522;
 
     const [poisWithImages, weather] = await Promise.all([
       Promise.all(
-        rawPois.map(async (poi) => {
-          const imageUrl = poi.image_url || (await this.aiService.fetchWikipediaImage(poi.image_query || poi.name));
-          return { ...poi, image_url: imageUrl };
+        rawPois.map(async (poi, idx) => {
+          // Jour 1, Premier lieu : Toujours le monument / édifice emblématique résolu
+          if (idx === 0) {
+            return { ...poi, image_url: monument.imageUrl };
+          }
+          const isStaticPlaceholder =
+            poi.image_url &&
+            (poi.image_url.includes('photo-1499856871958-5b9627545d1a') ||
+             poi.image_url.includes('photo-1550966871-3ed3cdb5ed0c') ||
+             poi.image_url.includes('photo-1502602898657-3e91760cbb34') ||
+             poi.image_url.includes('photo-1544816155-12df9643f363') ||
+             poi.image_url.includes('photo-1514933651103-005eec06c04b') ||
+             poi.image_url.includes('photo-1540555700478-4be289fbecef') ||
+             poi.image_url.includes('photo-1483985988355-763728e1935b') ||
+             poi.image_url.includes('photo-1486406146926-c627a92ad1ab') ||
+             poi.image_url.includes('photo-1488646953014-85cb44e25828'));
+
+          let imageUrl = poi.image_url;
+          if (!imageUrl || isStaticPlaceholder) {
+            const query = poi.image_query || `${poi.name} ${dto.destination}`;
+            imageUrl = await this.aiService.fetchWikipediaImage(query, monument.imageUrl);
+          }
+          return { ...poi, image_url: imageUrl || monument.imageUrl };
         }),
       ),
       this.aiService.fetchWeather(lat, lng, dto.duration_days, dto.start_date),
@@ -181,9 +281,6 @@ export class TripsService {
 
     // 3. Create trip document in user's tenant DB
     const tripId = uuidv4();
-    const parts = dto.destination.split(',').map((s) => s.trim());
-    const derivedCity = dto.city || (parts.length > 0 ? parts[0] : dto.destination);
-    const derivedCountry = dto.country || (parts.length > 1 ? parts.slice(1).join(', ') : undefined);
 
     const tripData = {
       id: tripId,
@@ -193,6 +290,7 @@ export class TripsService {
       city: derivedCity,
       country: derivedCountry,
       country_code: dto.country_code,
+      cover_image_url: monument.imageUrl,
       start_date: dto.start_date,
       end_date: dto.end_date,
       duration_days: dto.duration_days,
