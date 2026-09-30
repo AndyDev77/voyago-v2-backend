@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { Trip, TripDocument, TripSchema } from './schemas/trip.schema';
 import { ProfileSchema } from '../gamification/schemas/profile.schema';
+import { UserXpActionSchema } from '../gamification/schemas/user-xp-action.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
 import { GenerateTripDto } from './dto/generate-trip.dto';
 import { AiService } from '../ai/ai.service';
@@ -319,9 +320,11 @@ export class TripsService {
     // 5. Update profile in user's tenant DB: award XP, increment trips_count, check badges
     const profile = await ProfileModel.findOne({ user_id: user.user_id }).exec();
     if (profile) {
-      const newXp = profile.xp + 50;
+      const isFirst = (profile.trips_count || 0) === 0;
+      const tripXp = isFirst ? 7 : 3;
+      const newXp = (profile.xp || 0) + tripXp;
       const newLevel = Math.floor(newXp / 100) + 1;
-      const newTripsCount = profile.trips_count + 1;
+      const newTripsCount = (profile.trips_count || 0) + 1;
 
       await ProfileModel.updateOne(
         { user_id: user.user_id },
@@ -335,6 +338,33 @@ export class TripsService {
           },
         },
       ).exec();
+
+      // Enregistrer l'action dans user_xp_actions (anti-triche & cohérence de collection)
+      try {
+        const ActionModel = await this.tenancyService.getTenantModel<any>(
+          user.user_id,
+          'UserXpAction',
+          UserXpActionSchema,
+        );
+        const actionKey = isFirst ? 'first_trip' : 'generate_trip';
+        await ActionModel.findOneAndUpdate(
+          { user_id: user.user_id, action: actionKey },
+          {
+            $set: {
+              user_id: user.user_id,
+              tenant_id: tenantId,
+              action: actionKey,
+              xp: tripXp,
+              completed: true,
+              completed_at: new Date(),
+            },
+            $inc: { count: 1 },
+          },
+          { upsert: true },
+        ).exec();
+      } catch (err: any) {
+        this.logger.warn(`Could not sync trip to user_xp_actions: ${err.message}`);
+      }
 
       const updatedProfile = await ProfileModel.findOne({ user_id: user.user_id }).exec();
       if (updatedProfile) {
