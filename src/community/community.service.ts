@@ -1,10 +1,19 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import * as crypto from 'crypto';
 import { Trip, TripDocument } from '../trips/schemas/trip.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
+import { UserSession, UserSessionDocument } from '../auth/schemas/user-session.schema';
 import { ProfileSchema } from '../gamification/schemas/profile.schema';
 import { TenancyService } from '../tenancy/tenancy.service';
+import { GamificationService } from '../gamification/gamification.service';
+import { CommunityCircle, CommunityCircleDocument } from './schemas/community-circle.schema';
+import { CommunityMember, CommunityMemberDocument } from './schemas/community-member.schema';
+import { CommunityPost, CommunityPostDocument } from './schemas/community-post.schema';
+import { CreateCircleDto } from './dto/create-circle.dto';
+import { CreatePostDto } from './dto/create-post.dto';
+import { ShareTripToCircleDto } from './dto/share-trip.dto';
 
 import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
 
@@ -13,14 +22,41 @@ export class CommunityService {
   private readonly logger = new Logger(CommunityService.name);
 
   constructor(
-    // Shared/community trip mirror — reads public trips from voyago_tenants
     @InjectModel(Trip.name, TENANT_DB_CONNECTION) private readonly sharedTripModel: Model<TripDocument>,
+    @InjectModel(CommunityCircle.name, TENANT_DB_CONNECTION) private readonly circleModel: Model<CommunityCircleDocument>,
+    @InjectModel(CommunityMember.name, TENANT_DB_CONNECTION) private readonly memberModel: Model<CommunityMemberDocument>,
+    @InjectModel(CommunityPost.name, TENANT_DB_CONNECTION) private readonly postModel: Model<CommunityPostDocument>,
     @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
+    @InjectModel(UserSession.name, GLOBAL_DB_CONNECTION) private readonly sessionModel: Model<UserSessionDocument>,
     private readonly tenancyService: TenancyService,
+    private readonly gamificationService: GamificationService,
   ) {}
 
+  // =========================================================================
+  // HELPER: RÉSOLUTION D'UTILISATEUR VIA HEADER D'AUTHENTIFICATION
+  // =========================================================================
+
+  private async resolveUserId(currentUserId?: string, authHeader?: string): Promise<string | undefined> {
+    if (currentUserId && currentUserId.trim().length > 0) {
+      return currentUserId.trim();
+    }
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim();
+      if (token) {
+        const session = await this.sessionModel.findOne({ session_token: token }).lean().exec();
+        if (session && session.expires_at > new Date()) {
+          return session.user_id;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  // =========================================================================
+  // 1. PUBLIC FEED & PUBLIC PROFILES (LOGIQUE EXISTANTE PRÉSERVÉE)
+  // =========================================================================
+
   async getPublicFeed(): Promise<object[]> {
-    // Read public trips from shared/mirrored DB
     const trips = await this.sharedTripModel
       .find({ is_public: true })
       .sort({ created_at: -1 })
@@ -48,6 +84,7 @@ export class CommunityService {
               name: author.name,
               pseudo: author.pseudo || null,
               avatar_emoji: author.avatar_emoji || null,
+              picture: author.picture || null,
               is_pro: author.is_pro || false,
             }
           : null,
@@ -61,7 +98,6 @@ export class CommunityService {
       throw new NotFoundException(`User ${user_id} not found`);
     }
 
-    // Get profile from the user's own tenant DB
     let profile: any = null;
     try {
       const ProfileModel = await this.tenancyService.getTenantModel<any>(
@@ -70,11 +106,10 @@ export class CommunityService {
         ProfileSchema,
       );
       profile = await ProfileModel.findOne({ user_id }).lean().exec();
-    } catch (err) {
+    } catch (err: any) {
       this.logger.warn(`Could not fetch profile for ${user_id}: ${err.message}`);
     }
 
-    // Get public trips from shared DB
     const trips = await this.sharedTripModel
       .find({ user_id, is_public: true })
       .sort({ created_at: -1 })
@@ -102,5 +137,652 @@ export class CommunityService {
         : null,
       trips,
     };
+  }
+
+  // =========================================================================
+  // 2. GESTION DES CERCLES / COMMUNAUTÉS (CHIFFRES RÉELS ET NON INVENTÉS)
+  // =========================================================================
+
+  private slugify(text: string): string {
+    return text
+      .toString()
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^\w\-]+/g, '')
+      .replace(/\-\-+/g, '-');
+  }
+
+  async getCircles(
+    query: {
+      category?: string;
+      destination?: string;
+      search?: string;
+      my_user_id?: string;
+      limit?: number;
+    },
+    authHeader?: string,
+  ): Promise<object[]> {
+    await this.seedDefaultCirclesIfNeeded();
+
+    const effectiveUserId = await this.resolveUserId(query.my_user_id, authHeader);
+
+    const filter: any = { is_public: true };
+
+    if (query.category && query.category !== 'all') {
+      filter.category = query.category;
+    }
+
+    if (query.destination) {
+      filter.$or = [
+        { destination_city: new RegExp(query.destination, 'i') },
+        { destination_country: new RegExp(query.destination, 'i') },
+      ];
+    }
+
+    if (query.search) {
+      filter.$or = [
+        { name: new RegExp(query.search, 'i') },
+        { description: new RegExp(query.search, 'i') },
+        { destination_city: new RegExp(query.search, 'i') },
+        { destination_country: new RegExp(query.search, 'i') },
+        { tags: { $in: [new RegExp(query.search, 'i')] } },
+      ];
+    }
+
+    let myJoinedCircleIds = new Set<string>();
+    if (effectiveUserId) {
+      const myMemberships: any[] = await this.memberModel
+        .find({ user_id: effectiveUserId })
+        .lean()
+        .exec();
+      myJoinedCircleIds = new Set(myMemberships.map((m: any) => m.circle_id));
+    }
+
+    const circles: any[] = await this.circleModel
+      .find(filter)
+      .sort({ created_at: -1 })
+      .limit(query.limit || 30)
+      .lean()
+      .exec();
+
+    const circleIds = circles.map((c) => c.id);
+
+    // Calculer dynamiquement les CHIFFRES RÉELS depuis les collections
+    const [memberCounts, postCounts, tripCounts] = await Promise.all([
+      this.memberModel.aggregate([
+        { $match: { circle_id: { $in: circleIds } } },
+        { $group: { _id: '$circle_id', count: { $sum: 1 } } },
+      ]),
+      this.postModel.aggregate([
+        { $match: { circle_id: { $in: circleIds } } },
+        { $group: { _id: '$circle_id', count: { $sum: 1 } } },
+      ]),
+      this.postModel.aggregate([
+        { $match: { circle_id: { $in: circleIds }, trip_id: { $ne: null } } },
+        { $group: { _id: '$circle_id', count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const memberCountMap = new Map(memberCounts.map((m: any) => [m._id, m.count]));
+    const postCountMap = new Map(postCounts.map((p: any) => [p._id, p.count]));
+    const tripCountMap = new Map(tripCounts.map((t: any) => [t._id, t.count]));
+
+    const creatorIds = [...new Set(circles.map((c) => c.creator_id))];
+    const creators: any[] = await this.userModel
+      .find({ user_id: { $in: creatorIds } })
+      .lean()
+      .exec();
+    const creatorMap = new Map(creators.map((u) => [u.user_id, u]));
+
+    return circles.map((circle) => {
+      const creator = creatorMap.get(circle.creator_id);
+      const realMembersCount = memberCountMap.get(circle.id) || 0;
+      const realPostsCount = postCountMap.get(circle.id) || 0;
+      const realTripsCount = tripCountMap.get(circle.id) || 0;
+
+      // Resynchroniser le document en base si décalage
+      if (
+        circle.members_count !== realMembersCount ||
+        circle.posts_count !== realPostsCount ||
+        circle.trips_count !== realTripsCount
+      ) {
+        this.circleModel
+          .updateOne(
+            { id: circle.id },
+            {
+              members_count: realMembersCount,
+              posts_count: realPostsCount,
+              trips_count: realTripsCount,
+            },
+          )
+          .exec()
+          .catch(() => {});
+      }
+
+      return {
+        ...circle,
+        members_count: realMembersCount,
+        posts_count: realPostsCount,
+        trips_count: realTripsCount,
+        is_member: myJoinedCircleIds.has(circle.id),
+        creator: creator
+          ? {
+              user_id: creator.user_id,
+              name: creator.name,
+              pseudo: creator.pseudo || null,
+              avatar_emoji: creator.avatar_emoji || null,
+              picture: creator.picture || null,
+              is_pro: creator.is_pro || false,
+            }
+          : null,
+      };
+    });
+  }
+
+  async getCircleById(
+    circleIdOrSlug: string,
+    currentUserId?: string,
+    authHeader?: string,
+  ): Promise<object> {
+    const circle: any = await this.circleModel
+      .findOne({
+        $or: [{ id: circleIdOrSlug }, { slug: circleIdOrSlug }],
+      })
+      .lean()
+      .exec();
+
+    if (!circle) {
+      throw new NotFoundException(`Circle "${circleIdOrSlug}" introuvable`);
+    }
+
+    const effectiveUserId = await this.resolveUserId(currentUserId, authHeader);
+
+    // Calculer les CHIFFRES RÉELS et EXACTS à la volée
+    const [realMembersCount, realPostsCount, realTripsCount] = await Promise.all([
+      this.memberModel.countDocuments({ circle_id: circle.id }).exec(),
+      this.postModel.countDocuments({ circle_id: circle.id }).exec(),
+      this.postModel.countDocuments({ circle_id: circle.id, trip_id: { $ne: null } }).exec(),
+    ]);
+
+    // Resynchroniser le document pour la cohérence globale
+    await this.circleModel.updateOne(
+      { id: circle.id },
+      {
+        members_count: realMembersCount,
+        posts_count: realPostsCount,
+        trips_count: realTripsCount,
+      },
+    ).exec();
+
+    const creator: any = await this.userModel
+      .findOne({ user_id: circle.creator_id })
+      .lean()
+      .exec();
+
+    let isMember = false;
+    let myRole: string | null = null;
+
+    if (effectiveUserId) {
+      const membership: any = await this.memberModel
+        .findOne({ circle_id: circle.id, user_id: effectiveUserId })
+        .lean()
+        .exec();
+      if (membership) {
+        isMember = true;
+        myRole = membership.role;
+      }
+    }
+
+    // Récupérer les VRAIS membres ayant rejoint
+    const recentMembers: any[] = await this.memberModel
+      .find({ circle_id: circle.id })
+      .sort({ joined_at: -1 })
+      .limit(30)
+      .lean()
+      .exec();
+
+    const memberUserIds = recentMembers.map((m) => m.user_id);
+    const memberUsers: any[] = await this.userModel
+      .find({ user_id: { $in: memberUserIds } })
+      .lean()
+      .exec();
+    const memberMap = new Map(memberUsers.map((u) => [u.user_id, u]));
+
+    return {
+      ...circle,
+      members_count: realMembersCount,
+      posts_count: realPostsCount,
+      trips_count: realTripsCount,
+      is_member: isMember,
+      my_role: myRole,
+      creator: creator
+        ? {
+            user_id: creator.user_id,
+            name: creator.name,
+            pseudo: creator.pseudo || null,
+            avatar_emoji: creator.avatar_emoji || null,
+            picture: creator.picture || null,
+            is_pro: creator.is_pro || false,
+          }
+        : null,
+      members_sample: recentMembers.map((m) => {
+        const u = memberMap.get(m.user_id);
+        return {
+          user_id: m.user_id,
+          role: m.role,
+          name: u?.name || 'Voyageur',
+          pseudo: u?.pseudo || null,
+          avatar_emoji: u?.avatar_emoji || '🧭',
+          picture: u?.picture || null,
+          is_pro: u?.is_pro || false,
+          joined_at: m.joined_at,
+        };
+      }),
+    };
+  }
+
+  async createCircle(userId: string, dto: CreateCircleDto): Promise<object> {
+    if (!dto.name || dto.name.trim().length < 3) {
+      throw new BadRequestException('Le nom du cercle doit comporter au moins 3 caractères');
+    }
+
+    const circleId = crypto.randomUUID();
+    let baseSlug = this.slugify(dto.name);
+    let slug = baseSlug;
+    let suffix = 1;
+
+    while (await this.circleModel.findOne({ slug }).exec()) {
+      slug = `${baseSlug}-${suffix++}`;
+    }
+
+    const circleData = {
+      id: circleId,
+      name: dto.name.trim(),
+      slug,
+      description: dto.description?.trim() || '',
+      avatar_emoji: dto.avatar_emoji || '🧭',
+      cover_image_url:
+        dto.cover_image_url ||
+        'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1200&q=80',
+      category: dto.category || 'general',
+      destination_city: dto.destination_city || null,
+      destination_country: dto.destination_country || null,
+      creator_id: userId,
+      members_count: 1, // Créateur initial
+      trips_count: 0,
+      posts_count: 0,
+      is_public: dto.is_public !== undefined ? dto.is_public : true,
+      tags: dto.tags || [],
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const circle = await this.circleModel.create(circleData);
+
+    // Ajouter automatiquement le créateur comme membre 'creator'
+    await this.memberModel.create({
+      circle_id: circleId,
+      user_id: userId,
+      role: 'creator',
+      joined_at: new Date(),
+    });
+
+    this.logger.log(`Created community circle "${circle.name}" (${circleId}) by user ${userId}`);
+    return circle;
+  }
+
+  async joinCircle(userId: string, circleId: string): Promise<object> {
+    const circle = await this.circleModel.findOne({ id: circleId }).exec();
+    if (!circle) {
+      throw new NotFoundException(`Cercle ${circleId} introuvable`);
+    }
+
+    const existing = await this.memberModel.findOne({ circle_id: circleId, user_id: userId }).exec();
+    if (existing) {
+      const realCount = await this.memberModel.countDocuments({ circle_id: circleId }).exec();
+      return {
+        success: true,
+        message: 'Déjà membre de cette communauté',
+        circle_id: circleId,
+        members_count: realCount,
+      };
+    }
+
+    await this.memberModel.create({
+      circle_id: circleId,
+      user_id: userId,
+      role: 'explorer',
+      joined_at: new Date(),
+    });
+
+    // Mettre à jour avec le compte réel
+    const realCount = await this.memberModel.countDocuments({ circle_id: circleId }).exec();
+    circle.members_count = realCount;
+    await circle.save();
+
+    return {
+      success: true,
+      message: `Bienvenue dans la tribu "${circle.name}" !`,
+      circle_id: circleId,
+      members_count: realCount,
+    };
+  }
+
+  async leaveCircle(userId: string, circleId: string): Promise<object> {
+    const circle = await this.circleModel.findOne({ id: circleId }).exec();
+    if (!circle) {
+      throw new NotFoundException(`Cercle ${circleId} introuvable`);
+    }
+
+    await this.memberModel.deleteOne({ circle_id: circleId, user_id: userId }).exec();
+
+    // Mettre à jour avec le compte réel
+    const realCount = await this.memberModel.countDocuments({ circle_id: circleId }).exec();
+    circle.members_count = realCount;
+    await circle.save();
+
+    return {
+      success: true,
+      message: `Vous avez quitté le cercle "${circle.name}"`,
+      circle_id: circleId,
+      members_count: realCount,
+    };
+  }
+
+  // =========================================================================
+  // 3. POSTS, MOMENTS & PARTAGES DE VOYAGES DANS LE CERCLE
+  // =========================================================================
+
+  async getCirclePosts(circleId: string): Promise<object[]> {
+    const posts: any[] = await this.postModel
+      .find({ circle_id: circleId })
+      .sort({ created_at: -1 })
+      .limit(50)
+      .lean()
+      .exec();
+
+    const userIds = [...new Set(posts.map((p) => p.user_id))];
+    const users: any[] = await this.userModel
+      .find({ user_id: { $in: userIds } })
+      .lean()
+      .exec();
+    const userMap = new Map(users.map((u) => [u.user_id, u]));
+
+    const tripIds = [...new Set(posts.map((p) => p.trip_id).filter(Boolean))];
+    const trips: any[] = await this.sharedTripModel
+      .find({ id: { $in: tripIds } })
+      .lean()
+      .exec();
+    const tripMap = new Map(trips.map((t) => [t.id, t]));
+
+    return posts.map((post) => {
+      const author = userMap.get(post.user_id);
+      const linkedTrip = post.trip_id ? tripMap.get(post.trip_id) : null;
+
+      return {
+        ...post,
+        author: author
+          ? {
+              user_id: author.user_id,
+              name: author.name,
+              pseudo: author.pseudo || null,
+              avatar_emoji: author.avatar_emoji || null,
+              picture: author.picture || null,
+              is_pro: author.is_pro || false,
+            }
+          : null,
+        trip: linkedTrip || null,
+      };
+    });
+  }
+
+  async createPost(userId: string, circleId: string, dto: CreatePostDto): Promise<object> {
+    const circle = await this.circleModel.findOne({ id: circleId }).exec();
+    if (!circle) {
+      throw new NotFoundException(`Cercle ${circleId} introuvable`);
+    }
+
+    const postId = crypto.randomUUID();
+    const postData = {
+      id: postId,
+      circle_id: circleId,
+      user_id: userId,
+      content: dto.content.trim(),
+      trip_id: dto.trip_id || null,
+      poi_title: dto.poi_title || null,
+      poi_city: dto.poi_city || null,
+      poi_country: dto.poi_country || null,
+      image_urls: dto.image_urls || [],
+      likes_count: 0,
+      liked_by: [],
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const post = await this.postModel.create(postData);
+
+    // Mettre à jour avec le compte réel
+    const [realPostsCount, realTripsCount] = await Promise.all([
+      this.postModel.countDocuments({ circle_id: circleId }).exec(),
+      this.postModel.countDocuments({ circle_id: circleId, trip_id: { $ne: null } }).exec(),
+    ]);
+    circle.posts_count = realPostsCount;
+    circle.trips_count = realTripsCount;
+    await circle.save();
+
+    const author: any = await this.userModel.findOne({ user_id: userId }).lean().exec();
+
+    return {
+      ...post.toObject(),
+      author: author
+        ? {
+            user_id: author.user_id,
+            name: author.name,
+            pseudo: author.pseudo || null,
+            avatar_emoji: author.avatar_emoji || null,
+            picture: author.picture || null,
+            is_pro: author.is_pro || false,
+          }
+        : null,
+    };
+  }
+
+  async shareTripToCircle(userId: string, circleId: string, dto: ShareTripToCircleDto): Promise<object> {
+    const circle = await this.circleModel.findOne({ id: circleId }).exec();
+    if (!circle) {
+      throw new NotFoundException(`Cercle ${circleId} introuvable`);
+    }
+
+    // Récupérer le voyage dans les voyages partagés ou dans le tenant de l'utilisateur
+    let trip: any = await this.sharedTripModel.findOne({ id: dto.trip_id }).lean().exec();
+    if (!trip) {
+      const TripModel = await this.tenancyService.getTenantModel<any>(userId, 'Trip');
+      trip = await TripModel.findOne({ id: dto.trip_id }).lean().exec();
+    }
+
+    if (!trip) {
+      throw new NotFoundException(`Itinéraire ${dto.trip_id} introuvable`);
+    }
+
+    // S'assurer que le voyage est public dans le miroir partagé
+    try {
+      await this.sharedTripModel.updateOne(
+        { id: dto.trip_id },
+        { $set: { ...trip, is_public: true } },
+        { upsert: true },
+      ).exec();
+    } catch (_) {}
+
+    const cover = trip.cover_image_url || trip.pois?.[0]?.image_url || null;
+    const postId = crypto.randomUUID();
+
+    const postData = {
+      id: postId,
+      circle_id: circleId,
+      user_id: userId,
+      content: dto.comment?.trim() || `J'ai partagé mon aventure "${trip.destination}" avec la tribu !`,
+      trip_id: trip.id,
+      poi_title: trip.destination,
+      poi_city: trip.destination,
+      poi_country: trip.country || null,
+      image_urls: cover ? [cover] : [],
+      likes_count: 0,
+      liked_by: [],
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const post = await this.postModel.create(postData);
+
+    // Mettre à jour avec le compte réel
+    const [realPostsCount, realTripsCount] = await Promise.all([
+      this.postModel.countDocuments({ circle_id: circleId }).exec(),
+      this.postModel.countDocuments({ circle_id: circleId, trip_id: { $ne: null } }).exec(),
+    ]);
+    circle.posts_count = realPostsCount;
+    circle.trips_count = realTripsCount;
+    await circle.save();
+
+    // Octroyer les points d'XP pour le partage de voyage (Gamification)
+    let xpResult: any = null;
+    try {
+      xpResult = await this.gamificationService.awardXP(userId, 'share_trip');
+    } catch (err: any) {
+      this.logger.warn(`Could not award share_trip XP to ${userId}: ${err.message}`);
+    }
+
+    return {
+      success: true,
+      message: 'Itinéraire partagé avec succès dans la communauté !',
+      post,
+      trip,
+      gamification: xpResult,
+    };
+  }
+
+  async toggleLikePost(userId: string, postId: string): Promise<object> {
+    const post = await this.postModel.findOne({ id: postId }).exec();
+    if (!post) {
+      throw new NotFoundException(`Post ${postId} introuvable`);
+    }
+
+    const liked = post.liked_by.includes(userId);
+    if (liked) {
+      post.liked_by = post.liked_by.filter((id) => id !== userId);
+      post.likes_count = Math.max(0, post.likes_count - 1);
+    } else {
+      post.liked_by.push(userId);
+      post.likes_count = (post.likes_count || 0) + 1;
+    }
+
+    await post.save();
+
+    return {
+      post_id: postId,
+      liked: !liked,
+      likes_count: post.likes_count,
+    };
+  }
+
+  // =========================================================================
+  // 4. AUTO-SEEDING & SYNCHRONISATION DES COMPTEURS RÉELS
+  // =========================================================================
+
+  private async seedDefaultCirclesIfNeeded(): Promise<void> {
+    const count = await this.circleModel.countDocuments().exec();
+    if (count === 0) {
+      const defaultCircles = [
+        {
+          id: 'circle_italy_secrets',
+          name: 'Secrets de Rome & Toscane',
+          slug: 'secrets-de-rome-et-toscane',
+          description: 'Bons plans de ruelles, trattorias authentiques et couchers de soleil cachés en Italie.',
+          avatar_emoji: '🏛️',
+          cover_image_url: 'https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1200&q=80',
+          category: 'culture',
+          destination_city: 'Rome',
+          destination_country: 'Italie',
+          creator_id: 'user_voyago_team',
+          members_count: 0,
+          trips_count: 0,
+          posts_count: 0,
+          is_public: true,
+          tags: ['rome', 'toscane', 'gastronomie', 'culture'],
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+        {
+          id: 'circle_japan_adventures',
+          name: 'Aventuriers du Japon',
+          slug: 'aventuriers-du-japon',
+          description: 'Temples sacrés de Kyoto, nuits électriques à Tokyo et randonnées au Mont Fuji.',
+          avatar_emoji: '⛩️',
+          cover_image_url: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1200&q=80',
+          category: 'adventure',
+          destination_city: 'Tokyo',
+          destination_country: 'Japon',
+          creator_id: 'user_voyago_team',
+          members_count: 0,
+          trips_count: 0,
+          posts_count: 0,
+          is_public: true,
+          tags: ['japon', 'tokyo', 'kyoto', 'aventure'],
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+        {
+          id: 'circle_nature_treks',
+          name: 'Vanlife & Bivouac Sauvage',
+          slug: 'vanlife-et-bivouac-sauvage',
+          description: 'Spots de campings étoilés, sentiers côtiers et roadtrips en totale liberté.',
+          avatar_emoji: '🚐',
+          cover_image_url: 'https://images.unsplash.com/photo-1523987355523-c7b5b0dd90a7?auto=format&fit=crop&w=1200&q=80',
+          category: 'nature',
+          destination_city: 'Alpes & Fjords',
+          destination_country: 'Europe',
+          creator_id: 'user_voyago_team',
+          members_count: 0,
+          trips_count: 0,
+          posts_count: 0,
+          is_public: true,
+          tags: ['vanlife', 'nature', 'roadtrip', 'bivouac'],
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ];
+
+      try {
+        await this.circleModel.insertMany(defaultCircles);
+        this.logger.log('Seeded initial community circles with real zero-counts');
+      } catch (err: any) {
+        this.logger.warn(`Could not seed default circles: ${err.message}`);
+      }
+    }
+
+    // Synchroniser immédiatement TOUS les cercles existants avec leurs VRAIS chiffres
+    try {
+      const allCircles = await this.circleModel.find().lean().exec();
+      for (const c of allCircles) {
+        const realMembers = await this.memberModel.countDocuments({ circle_id: c.id }).exec();
+        const realPosts = await this.postModel.countDocuments({ circle_id: c.id }).exec();
+        const realTrips = await this.postModel.countDocuments({ circle_id: c.id, trip_id: { $ne: null } }).exec();
+
+        if (
+          c.members_count !== realMembers ||
+          c.posts_count !== realPosts ||
+          c.trips_count !== realTrips
+        ) {
+          await this.circleModel.updateOne(
+            { id: c.id },
+            {
+              members_count: realMembers,
+              posts_count: realPosts,
+              trips_count: realTrips,
+            },
+          ).exec();
+        }
+      }
+    } catch (_) {}
   }
 }
