@@ -17,6 +17,8 @@ export class POI {
   rating?: number;
   reviews_count?: number;
   insider_tip?: string | null;
+  /** Pépite secrète peu connue des touristes (comptée dans le journal) */
+  hidden_gem?: boolean;
 }
 
 export class DayWeather {
@@ -87,8 +89,19 @@ export class Trip {
   @Prop({ default: 0 })
   likes: number;
 
+  @Prop({ type: [String], default: [] })
+  liked_by: string[];
+
   @Prop({ default: Date.now })
   created_at: Date;
+
+  /** Voyage terminé manuellement : il quitte la carte pour le journal */
+  @Prop({ type: Date, default: null })
+  completed_at?: Date | null;
+
+  /** Journal partagé à la communauté (XP attribuée une seule fois) */
+  @Prop({ type: Date, default: null })
+  journal_shared_at?: Date | null;
 }
 
 export const TripSchema = SchemaFactory.createForClass(Trip);

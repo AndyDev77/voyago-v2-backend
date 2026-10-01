@@ -94,6 +94,43 @@ export class UploadService {
    * 4. Écrase et met à jour la base de données (picture + picture_key).
    * 5. Conserve l'avatar emoji par défaut sélectionné.
    */
+  /**
+   * Upload générique d'une image (photos du journal de voyage…).
+   * Mêmes formats et limite que la photo de profil.
+   */
+  async uploadImage(
+    file: Express.Multer.File,
+    fileNamePrefix: string,
+  ): Promise<{ url: string; key: string }> {
+    if (!file) {
+      throw new BadRequestException('Aucun fichier fourni pour l\'upload');
+    }
+    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      throw new BadRequestException(
+        `Format d'image non supporté (${file.mimetype}). Formats acceptés : JPG, PNG, WEBP, HEIC.`,
+      );
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      throw new BadRequestException('L\'image est trop volumineuse. Limite maximale : 4MB.');
+    }
+
+    try {
+      const ext = file.originalname?.includes('.') ? file.originalname.split('.').pop() : 'jpg';
+      const utFile = new UTFile([new Uint8Array(file.buffer)], `${fileNamePrefix}_${Date.now()}.${ext}`, {
+        type: file.mimetype,
+      });
+      const res = await this.utapi.uploadFiles(utFile);
+      if (res.error || !res.data) {
+        throw new Error(res.error?.message || 'UploadThing rejected file');
+      }
+      return { url: res.data.ufsUrl || res.data.url, key: res.data.key };
+    } catch (err: any) {
+      this.logger.error(`Upload error (${fileNamePrefix}): ${err.message}`);
+      throw new InternalServerErrorException(`Erreur lors du transfert vers UploadThing: ${err.message}`);
+    }
+  }
+
   async uploadProfilePicture(
     user: UserDocument,
     file: Express.Multer.File,

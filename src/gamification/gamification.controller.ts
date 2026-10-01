@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Param, UseGuards, Req, ForbiddenException } from '@nestjs/common';
-import { GamificationService } from './gamification.service';
+import { GamificationService, SERVER_ONLY_XP_ACTIONS } from './gamification.service';
 import { SessionAuthGuard } from '../common/guards/session-auth.guard';
 import { IsString } from 'class-validator';
 
@@ -26,6 +26,9 @@ export class GamificationController {
     const authUserId = req.user?.user_id;
     if (authUserId && body.user_id && authUserId !== body.user_id) {
       throw new ForbiddenException('Anti-cheat: Cannot award XP to another user account');
+    }
+    if (SERVER_ONLY_XP_ACTIONS.includes(body.action)) {
+      throw new ForbiddenException('Anti-cheat: this XP action is awarded by the server only');
     }
     const targetUserId = authUserId || body.user_id;
     return this.gamificationService.awardXP(targetUserId, body.action);

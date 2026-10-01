@@ -79,7 +79,12 @@ export class TenancyService implements OnModuleDestroy {
       return connection.models[modelName] as Model<T>;
     }
 
-    return connection.model<T>(modelName, schema);
+    // Untyped call + cast: letting mongoose infer the generic Schema type
+    // exhausts tsc's memory (mongoose 8.2x + TS 5.9).
+    const untyped = connection as unknown as {
+      model(name: string, schema: Schema): Model<any>;
+    };
+    return untyped.model(modelName, schema) as Model<T>;
   }
 
   private getTenantUri(tenantId: string): string {

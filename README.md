@@ -157,7 +157,7 @@ STRIPE_WEBHOOK_SECRET=whsec_your_stripe_webhook_secret
 | POST | `/api/auth/google/session` | Connexion Google OAuth |
 | POST | `/api/auth/forgot-password` | Envoyer code reset |
 | POST | `/api/auth/reset-password` | Réinitialiser mot de passe |
-| GET | `/api/trips/:user_id` | Voyages d'un utilisateur |
+| GET | `/api/trips/:user_id` | Voyages d'un utilisateur (tous pour le propriétaire authentifié, publics sinon) |
 | GET | `/api/trip/:trip_id` | Détail d'un voyage |
 | GET | `/api/profile/:user_id` | Profil utilisateur |
 | GET | `/api/pro/tiers` | Offres Pro |
@@ -165,6 +165,8 @@ STRIPE_WEBHOOK_SECRET=whsec_your_stripe_webhook_secret
 | GET | `/api/community/user/:id` | Profil public |
 | GET | `/api/xp/rewards` | Système XP |
 | POST | `/api/webhooks/stripe` | Webhook Stripe |
+| POST | `/api/places/stats` | Étoiles agrégées des voyageurs pour une liste de lieux |
+| GET | `/api/places/reviews?name=&lat=&lng=` | Derniers avis d'un lieu |
 
 ### Authentifiés (Bearer token & x-tenant-id)
 
@@ -175,6 +177,18 @@ STRIPE_WEBHOOK_SECRET=whsec_your_stripe_webhook_secret
 | POST | `/api/auth/logout` | Déconnexion |
 | POST | `/api/trips/generate` | Générer itinéraire IA (Gemini / Claude) |
 | POST | `/api/profile/xp` | Attribuer XP |
+| POST | `/api/community/trip/:id/like` | Liker / retirer le like d'un voyage public |
+| GET | `/api/notifications` | Notifications de la cloche + nombre de non lues |
+| GET | `/api/notifications/unread-count` | Nombre de notifications non lues |
+| POST | `/api/notifications/arrival` | Arrivée sur un lieu de l'itinéraire (demande d'avis, une fois par lieu et par voyage) |
+| POST | `/api/notifications/:id/read` · `/api/notifications/read-all` | Marquer comme lu |
+| POST | `/api/places/reviews` | Noter (1-5★), liker et commenter un lieu visité (+2 XP au premier avis) |
+| GET | `/api/journal` | Journal de voyage : voyages passés avec stats (distance, lieux visités, coups de cœur, pépites, XP) et badge |
+| GET | `/api/journal/:tripId` | Carnet d'un voyage : jours, lieux, souvenirs, avis donnés, météo |
+| PUT | `/api/journal/:tripId/entries` | Souvenir d'un lieu (note, humeurs, visité) |
+| POST · DELETE | `/api/journal/:tripId/photos` · `/photos/:key` | Photos souvenirs (UploadThing, 6 max par lieu) |
+| POST | `/api/journal/:tripId/complete` · `/reopen` | Terminer un voyage (quitte la carte) / le remettre sur la carte |
+| POST | `/api/journal/:tripId/share` | Partager le journal à la communauté (+5 XP la première fois) |
 | POST | `/api/pro/checkout` | Créer session Stripe |
 | GET | `/api/pro/status/:session_id` | Statut paiement |
 | GET | `/api/pro/me` | Statut Pro |

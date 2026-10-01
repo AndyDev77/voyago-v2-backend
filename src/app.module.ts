@@ -12,6 +12,9 @@ import { ProModule } from './pro/pro.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { InterestsModule } from './interests/interests.module';
 import { UploadModule } from './upload/upload.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { PlacesModule } from './places/places.module';
+import { JournalModule } from './journal/journal.module';
 
 import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from './common/constants';
 
@@ -59,6 +62,9 @@ import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from './common/constants';
     WebhooksModule,
     InterestsModule,
     UploadModule,
+    NotificationsModule,
+    PlacesModule,
+    JournalModule,
   ],
 })
 export class AppModule implements NestModule {

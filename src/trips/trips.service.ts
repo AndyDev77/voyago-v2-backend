@@ -16,6 +16,7 @@ import { User, UserDocument } from '../auth/schemas/user.schema';
 import { GenerateTripDto } from './dto/generate-trip.dto';
 import { AiService } from '../ai/ai.service';
 import { TenancyService } from '../tenancy/tenancy.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
 
 @Injectable()
@@ -28,9 +29,27 @@ export class TripsService {
     @InjectModel(User.name, GLOBAL_DB_CONNECTION) private readonly userModel: Model<UserDocument>,
     private readonly aiService: AiService,
     private readonly tenancyService: TenancyService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  async getUserTrips(user_id: string): Promise<Trip[]> {
+  /**
+   * Attend au plus `budgetMs` qu'une tâche d'enrichissement se termine.
+   * Au-delà, la réponse part sans attendre : la tâche continue en arrière-plan
+   * et persiste son résultat, qui sera servi au prochain chargement.
+   */
+  private async withinBudget(task: Promise<unknown>, budgetMs = 1500): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, budgetMs);
+    });
+    await Promise.race([task.catch(() => {}), timeout]);
+    clearTimeout(timer);
+  }
+
+  async getUserTrips(
+    user_id: string,
+    options: { publicOnly?: boolean } = {},
+  ): Promise<Trip[]> {
     // Read from the user's own tenant database
     const TripModel = await this.tenancyService.getTenantModel<TripDocument>(
       user_id,
@@ -64,6 +83,10 @@ export class TripsService {
       }
     }
 
+    if (options.publicOnly) {
+      trips = trips.filter((t) => t.is_public !== false);
+    }
+
     // Assurer que chaque voyage affiche l'édifice / monument réel de son pays
     const verifiedTrips = await Promise.all(
       trips.map(async (t) => {
@@ -75,7 +98,8 @@ export class TripsService {
         const lacksCover = !tripObj.cover_image_url || tripObj.cover_image_url.trim() === '';
 
         if ((isParisBridge && isNotParis) || lacksCover) {
-          try {
+          // Budget de temps : la liste ne doit pas attendre l'IA pour s'afficher
+          await this.withinBudget((async () => {
             const monument = await this.aiService.resolveCountryMonument(
               tripObj.destination,
               tripObj.country,
@@ -91,7 +115,7 @@ export class TripsService {
               { id: tripObj.id },
               { $set: { cover_image_url: monument.imageUrl, 'pois.0.image_url': monument.imageUrl } },
             ).exec().catch(() => {});
-          } catch (_) {}
+          })());
         }
         return tripObj;
       }),
@@ -133,7 +157,8 @@ export class TripsService {
     const lacksCover = !tripObj.cover_image_url || tripObj.cover_image_url.trim() === '';
 
     if ((isParisBridge && isNotParis) || lacksCover) {
-      try {
+      // Budget de temps : le détail ne doit pas attendre l'IA pour s'afficher
+      await this.withinBudget((async () => {
         const monument = await this.aiService.resolveCountryMonument(
           tripObj.destination,
           tripObj.country,
@@ -151,7 +176,7 @@ export class TripsService {
             { $set: { cover_image_url: monument.imageUrl, 'pois.0.image_url': monument.imageUrl } },
           ).exec().catch(() => {});
         }
-      } catch (_) {}
+      })());
     }
 
     return tripObj;
@@ -233,18 +258,17 @@ export class TripsService {
       ...dto,
       thermal_sensitivity: dto.thermal_sensitivity || user.thermal_sensitivity || 'balanced',
     };
-    const rawPois = await this.aiService.generatePois(tripDto);
-
-    // 2. Résoudre le monument ou l'édifice emblématique du pays via IA & Wikimedia
+    // 2. Résoudre le monument ou l'édifice emblématique du pays via IA & Wikimedia.
+    // Indépendant des POIs : lancé en parallèle de la génération pour ne pas
+    // additionner les deux latences IA.
     const parts = dto.destination.split(',').map((s) => s.trim());
     const derivedCity = dto.city || (parts.length > 0 ? parts[0] : dto.destination);
     const derivedCountry = dto.country || (parts.length > 1 ? parts.slice(1).join(', ') : undefined);
 
-    const monument = await this.aiService.resolveCountryMonument(
-      dto.destination,
-      derivedCountry,
-      derivedCity,
-    );
+    const [rawPois, monument] = await Promise.all([
+      this.aiService.generatePois(tripDto),
+      this.aiService.resolveCountryMonument(dto.destination, derivedCountry, derivedCity),
+    ]);
 
     const firstValidPoi = rawPois.find((p) => p.lat !== 0 && p.lng !== 0);
     const lat = firstValidPoi?.lat ?? 48.8566;
@@ -371,6 +395,14 @@ export class TripsService {
         await this.awardBadges(ProfileModel, updatedProfile);
       }
     }
+
+    this.notificationsService.notifySafely(user.user_id, {
+      type: 'trip_ready',
+      title: `Ton itinéraire pour ${dto.destination} est prêt ✈️`,
+      body: `${dto.duration_days} jour(s), ${poisWithImages.length} lieux. Ouvre la carte et laisse-toi guider !`,
+      data: { trip_id: tripId, destination: dto.destination },
+      dedupe_key: `trip_ready:${tripId}`,
+    });
 
     return trip;
   }

@@ -34,6 +34,12 @@ export class CommunityController {
     return this.communityService.getUserPublicProfile(id);
   }
 
+  @Post('trip/:id/like')
+  @UseGuards(SessionAuthGuard)
+  async toggleLikeTrip(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.communityService.toggleLikeTrip(user.user_id, id);
+  }
+
   // =========================================================================
   // 2. CERCLES & TRIBUS COMMUNAUTAIRES
   // =========================================================================
