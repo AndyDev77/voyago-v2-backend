@@ -253,7 +253,7 @@ EXIGENCES D'OPTIMISATION ET D'AUTHENTICITÉ :
 4. DISTRIBUTION CHRONOLOGIQUE :
    - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée, order: 5 = Nuit si intensif).
 5. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}).
-6. ASTUCES D'INITIÉ PRÉCIEUSES : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le meilleur plat ou boisson à commander, le meilleur créneau pour éviter la file d'attente, conseil vestimentaire adapté à la météo et sa sensibilité thermique).
+6. ASTUCES D'INITIÉ PRÉCIEUSES & CONSEIL STYLE/MÉTÉO : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le plat ou cocktail emblématique à commander, le meilleur créneau horaire et spot photo secret pour éviter la foule, conseil tenue/chaussures adapté à la saison, météo et sensibilité thermique).
 7. STATS & NOTATION RÉALISTES :
    - rating : note réaliste entre 4.4 et 4.9
    - reviews_count : nombre d'avis réels entre 850 et 28000
