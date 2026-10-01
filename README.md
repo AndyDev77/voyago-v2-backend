@@ -155,7 +155,7 @@ STRIPE_WEBHOOK_SECRET=whsec_your_stripe_webhook_secret
 | POST | `/api/auth/google/session` | Connexion Google OAuth |
 | POST | `/api/auth/forgot-password` | Envoyer code reset |
 | POST | `/api/auth/reset-password` | Réinitialiser mot de passe |
-| GET | `/api/trips/:user_id` | Voyages d'un utilisateur |
+| GET | `/api/trips/:user_id` | Voyages d'un utilisateur (tous pour le propriétaire authentifié, publics sinon) |
 | GET | `/api/trip/:trip_id` | Détail d'un voyage |
 | GET | `/api/profile/:user_id` | Profil utilisateur |
 | GET | `/api/pro/tiers` | Offres Pro |
@@ -173,6 +173,7 @@ STRIPE_WEBHOOK_SECRET=whsec_your_stripe_webhook_secret
 | POST | `/api/auth/logout` | Déconnexion |
 | POST | `/api/trips/generate` | Générer itinéraire IA (Gemini / Claude) |
 | POST | `/api/profile/xp` | Attribuer XP |
+| POST | `/api/community/trip/:id/like` | Liker / retirer le like d'un voyage public |
 | POST | `/api/pro/checkout` | Créer session Stripe |
 | GET | `/api/pro/status/:session_id` | Statut paiement |
 | GET | `/api/pro/me` | Statut Pro |

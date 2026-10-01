@@ -87,6 +87,9 @@ export class Trip {
   @Prop({ default: 0 })
   likes: number;
 
+  @Prop({ type: [String], default: [] })
+  liked_by: string[];
+
   @Prop({ default: Date.now })
   created_at: Date;
 }

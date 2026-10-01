@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException, Logger } from '@nes
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as crypto from 'crypto';
-import { Trip, TripDocument } from '../trips/schemas/trip.schema';
+import { Trip, TripDocument, TripSchema } from '../trips/schemas/trip.schema';
 import { User, UserDocument } from '../auth/schemas/user.schema';
 import { UserSession, UserSessionDocument } from '../auth/schemas/user-session.schema';
 import { ProfileSchema } from '../gamification/schemas/profile.schema';
@@ -597,7 +597,7 @@ export class CommunityService {
     // Récupérer le voyage dans les voyages partagés ou dans le tenant de l'utilisateur
     let trip: any = await this.sharedTripModel.findOne({ id: dto.trip_id }).lean().exec();
     if (!trip) {
-      const TripModel = await this.tenancyService.getTenantModel<any>(userId, 'Trip');
+      const TripModel = await this.tenancyService.getTenantModel<any>(userId, 'Trip', TripSchema);
       trip = await TripModel.findOne({ id: dto.trip_id }).lean().exec();
     }
 
@@ -658,6 +658,47 @@ export class CommunityService {
       post,
       trip,
       gamification: xpResult,
+    };
+  }
+
+  async toggleLikeTrip(userId: string, tripId: string): Promise<object> {
+    const trip = await this.sharedTripModel
+      .findOne({ id: tripId, is_public: true })
+      .select('liked_by')
+      .lean()
+      .exec();
+    if (!trip) {
+      throw new NotFoundException(`Voyage ${tripId} introuvable`);
+    }
+
+    // Conditional atomic updates so concurrent toggles can't double-count
+    const liked = (trip.liked_by || []).includes(userId);
+    if (liked) {
+      await this.sharedTripModel
+        .updateOne(
+          { id: tripId, liked_by: userId },
+          { $pull: { liked_by: userId }, $inc: { likes: -1 } },
+        )
+        .exec();
+    } else {
+      await this.sharedTripModel
+        .updateOne(
+          { id: tripId, liked_by: { $ne: userId } },
+          { $addToSet: { liked_by: userId }, $inc: { likes: 1 } },
+        )
+        .exec();
+    }
+
+    const current: any = await this.sharedTripModel
+      .findOne({ id: tripId })
+      .select('liked_by likes')
+      .lean()
+      .exec();
+
+    return {
+      trip_id: tripId,
+      liked: (current?.liked_by || []).includes(userId),
+      likes: Math.max(0, current?.likes || 0),
     };
   }
 

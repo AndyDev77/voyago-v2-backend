@@ -6,6 +6,7 @@ import { Trip, TripSchema } from './schemas/trip.schema';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { UserSession, UserSessionSchema } from '../auth/schemas/user-session.schema';
 import { SessionAuthGuard } from '../common/guards/session-auth.guard';
+import { OptionalSessionAuthGuard } from '../common/guards/optional-session-auth.guard';
 import { AiModule } from '../ai/ai.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
 
@@ -29,7 +30,7 @@ import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants'
     TenancyModule,
   ],
   controllers: [TripsController],
-  providers: [TripsService, SessionAuthGuard],
+  providers: [TripsService, SessionAuthGuard, OptionalSessionAuthGuard],
   exports: [
     TripsService,
     MongooseModule.forFeature([{ name: Trip.name, schema: TripSchema }], TENANT_DB_CONNECTION),

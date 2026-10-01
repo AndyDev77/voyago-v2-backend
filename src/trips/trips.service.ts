@@ -30,7 +30,10 @@ export class TripsService {
     private readonly tenancyService: TenancyService,
   ) {}
 
-  async getUserTrips(user_id: string): Promise<Trip[]> {
+  async getUserTrips(
+    user_id: string,
+    options: { publicOnly?: boolean } = {},
+  ): Promise<Trip[]> {
     // Read from the user's own tenant database
     const TripModel = await this.tenancyService.getTenantModel<TripDocument>(
       user_id,
@@ -62,6 +65,10 @@ export class TripsService {
       } catch (err) {
         this.logger.warn(`Could not check legacy trips for ${user_id}: ${err.message}`);
       }
+    }
+
+    if (options.publicOnly) {
+      trips = trips.filter((t) => t.is_public !== false);
     }
 
     // Assurer que chaque voyage affiche l'édifice / monument réel de son pays
