@@ -320,6 +320,15 @@ export class AiService {
         : '1 = matin, 2 = déjeuner, 3 = après-midi, 4 = fin d\'après-midi / soirée';
     const interests = dto.interests.join(', ');
     const transports = dto.transports.join(', ');
+    // Rayon d'une journée selon le moyen de transport le plus rapide choisi :
+    // l'app affiche les temps de trajet réels entre chaque étape
+    const t = dto.transports.map((m) => m.toLowerCase());
+    const dayRadius = t.some((m) => /voiture|transport|metro|métro|bus|tram|bateau|taxi/.test(m))
+      ? '6 km (20-25 min de trajet maximum entre deux étapes)'
+      : t.some((m) => /velo|vélo|bike/.test(m))
+      ? '4 km (15-20 min à vélo maximum entre deux étapes)'
+      : '1,5 km (15-20 min à pied maximum entre deux étapes)';
+    const dayEnd = activitiesPerDay === 5 ? '21h' : '19h';
 
     return `Tu es Voyago, guide local d'exception et expert en conception de voyages sur mesure.
 Conçois un itinéraire authentique, géographiquement optimisé et mémorable.
@@ -337,14 +346,14 @@ Conçois un itinéraire authentique, géographiquement optimisé et mémorable.
 1. VOLUME : exactement ${activitiesPerDay} lieux par jour, soit ${totalPoisCount} au total. Créneaux "order" : ${orderSlots}. Le lieu order 2 est un restaurant ou une adresse gourmande.
 2. ZÉRO DOUBLON : aucun lieu ne doit apparaître deux fois sur l'ensemble du séjour.
 3. MONUMENT D'OUVERTURE : le lieu jour 1 / order 1 est LE monument ou l'édifice emblématique majeur de la destination (ex : Parthénon pour Athènes, Colisée pour Rome, Basilique de Yamoussoukro pour la Côte d'Ivoire). Son "image_query" est son nom universel (ex : "Parthenon Athens").
-4. LIEUX RÉELS UNIQUEMENT : de vrais monuments, musées, restaurants, marchés ou pépites existant réellement à ${dto.destination}. Aucun nom générique ou inventé ; en cas de doute, choisis un lieu plus connu.
-5. GPS EXACTS : "lat"/"lng" réels du lieu lui-même (5 décimales), jamais le centre-ville par défaut.
-6. UN QUARTIER PAR JOUR : les lieux d'une même journée sont proches et s'enchaînent sans détour (${transports}). Varie les ambiances d'un jour à l'autre : centre historique, quartiers artistiques et musées, nature et panoramas, vie locale et marchés.
+4. LIEUX RÉELS UNIQUEMENT : de vrais monuments, musées, restaurants, marchés ou pépites existant réellement à ${dto.destination}. Aucun nom générique ou inventé ; en cas de doute, choisis un lieu plus connu. "name" = nom officiel exact, tel qu'affiché sur Google Maps (sans ville ni description ajoutée).
+5. GPS EXACTS : "lat"/"lng" réels de l'entrée principale du lieu (5 décimales), jamais le centre-ville par défaut.
+6. UN QUARTIER PAR JOUR : les lieux d'une même journée tiennent dans un rayon de ${dayRadius} et s'enchaînent sans retour en arrière (${transports}). Varie les ambiances d'un jour à l'autre : centre historique, quartiers artistiques et musées, nature et panoramas, vie locale et marchés.
 7. PERSONNALISATION : au moins 70 % des lieux correspondent aux centres d'intérêt (${interests}). "category" reprend le centre d'intérêt correspondant.
 8. TEXTES COURTS ET UTILES (en français) :
    - "description" : 2 phrases maximum (40 mots), immersives et concrètes.
    - "insider_tip" : 1 phrase (25 mots max), conseil exclusif et actionnable : plat ou boisson à commander, meilleur créneau anti-foule, spot photo, ou tenue adaptée à la météo et à la sensibilité thermique.
-9. RÉALISME : "duration_minutes" cohérent avec le lieu (30 à 180), "rating" entre 4.4 et 4.9, "reviews_count" entre 850 et 28000.
+9. RÉALISME : "duration_minutes" = durée réelle de visite (30 à 180) ; une journée, visites et trajets compris, tient entre 9h et ${dayEnd}. "rating" entre 4.4 et 4.9, "reviews_count" entre 850 et 28000.
 
 ## FORMAT
 Réponds avec UNIQUEMENT un objet JSON compact (sans markdown, sans texte autour), trié par jour puis par order :

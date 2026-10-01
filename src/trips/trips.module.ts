@@ -9,6 +9,7 @@ import { SessionAuthGuard } from '../common/guards/session-auth.guard';
 import { OptionalSessionAuthGuard } from '../common/guards/optional-session-auth.guard';
 import { AiModule } from '../ai/ai.module';
 import { TenancyModule } from '../tenancy/tenancy.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants';
 
@@ -28,6 +29,7 @@ import { GLOBAL_DB_CONNECTION, TENANT_DB_CONNECTION } from '../common/constants'
     ),
     AiModule,
     TenancyModule,
+    NotificationsModule,
   ],
   controllers: [TripsController],
   providers: [TripsService, SessionAuthGuard, OptionalSessionAuthGuard],
