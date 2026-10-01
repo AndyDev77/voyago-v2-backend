@@ -122,6 +122,8 @@ JWT_SECRET=dev_secret_key_change_in_prod
 GOOGLE_CLIENT_ID=placeholder_google_id
 
 # --- MOTEURS IA (Génération d'Itinéraires & POIs) ---
+# gemini (défaut, offre gratuite) ou claude (clé API Console payante, sk-ant-api…)
+AI_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
 
