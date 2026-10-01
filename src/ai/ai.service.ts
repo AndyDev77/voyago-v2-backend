@@ -5,6 +5,34 @@ import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
 import { POI, DayWeather } from '../trips/schemas/trip.schema';
 import { GenerateTripDto } from '../trips/dto/generate-trip.dto';
+import { ResponseSchema, SchemaType } from '@google/generative-ai';
+
+const POI_RESPONSE_SCHEMA: ResponseSchema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    name: { type: SchemaType.STRING },
+    description: { type: SchemaType.STRING },
+    lat: { type: SchemaType.NUMBER },
+    lng: { type: SchemaType.NUMBER },
+    day: { type: SchemaType.INTEGER },
+    order: { type: SchemaType.INTEGER },
+    duration_minutes: { type: SchemaType.INTEGER },
+    category: { type: SchemaType.STRING },
+    image_query: { type: SchemaType.STRING },
+    rating: { type: SchemaType.NUMBER },
+    reviews_count: { type: SchemaType.INTEGER },
+    insider_tip: { type: SchemaType.STRING },
+  },
+  required: ['name', 'description', 'lat', 'lng', 'day', 'order', 'category', 'image_query', 'insider_tip'],
+};
+
+const TRIP_POIS_RESPONSE_SCHEMA: ResponseSchema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    pois: { type: SchemaType.ARRAY, items: POI_RESPONSE_SCHEMA },
+  },
+  required: ['pois'],
+};
 
 const WEATHER_CODE_MAP: Record<number, { icon: string; summary: string }> = {
   0: { icon: '☀️', summary: 'Ensoleillé' },
@@ -182,9 +210,17 @@ export class AiService {
     return 'Équilibré / Tempéré standard (confortable dans les conditions moyennes de saison)';
   }
 
+  private activitiesPerDay(dto: GenerateTripDto): number {
+    return dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
+  }
+
+  private expectedPoiCount(dto: GenerateTripDto): number {
+    return dto.duration_days * this.activitiesPerDay(dto);
+  }
+
   private buildOptimizedTripPrompt(dto: GenerateTripDto, cityCoords: { lat: number; lng: number }): string {
-    const activitiesPerDay = dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
-    const totalPoisCount = dto.duration_days * activitiesPerDay;
+    const activitiesPerDay = this.activitiesPerDay(dto);
+    const totalPoisCount = this.expectedPoiCount(dto);
 
     let dateContext = '';
     if (dto.start_date) {
@@ -206,8 +242,7 @@ export class AiService {
         : end.toLocaleDateString('fr-FR', options);
 
       dateContext = `
-- Période exacte du séjour : du ${startFormatted} au ${endFormatted} (${dto.duration_days} jours)
-- CALENDRIER & SAISONNALITÉ : Adapte impérativement l'itinéraire aux jours réels de la semaine (ex: musées fermés le lundi ou mardi, grands marchés locaux et animation le weekend) et aux conditions climatiques de cette saison à ${dto.destination}.`;
+- Dates : du ${startFormatted} au ${endFormatted}. Adapte l'itinéraire aux jours réels de la semaine (fermetures hebdomadaires des musées, marchés et animations du week-end) et à la saison à ${dto.destination}.`;
     }
 
     const paceDetails =
@@ -217,68 +252,44 @@ export class AiService {
         ? 'Intensif (5 étapes/jour) : Itinéraire dynamique et exaltant, optimisé pour voir un maximum de merveilles sans temps mort.'
         : 'Équilibré (4 étapes/jour) : Le dosage idéal entre incontournables, pépites secrètes, pause gourmande et temps libre.';
 
-    return `Tu es Voyago, l'intelligence artificielle experte en conception de voyages sur mesure et guide local d'exception.
-Tu conçois des itinéraires hyper-personnalisés, authentiques, géographiquement optimisés et mémorables.
+    const orderSlots =
+      activitiesPerDay === 3
+        ? '1 = matin, 2 = déjeuner, 3 = après-midi / soirée'
+        : activitiesPerDay === 5
+        ? '1 = matin, 2 = déjeuner, 3 = après-midi, 4 = fin d\'après-midi, 5 = soirée / nuit'
+        : '1 = matin, 2 = déjeuner, 3 = après-midi, 4 = fin d\'après-midi / soirée';
+    const interests = dto.interests.join(', ');
+    const transports = dto.transports.join(', ');
 
-OBJECTIF MAJEUR :
-Génère l'itinéraire COMPLET pour ${dto.destination} sur STRICTEMENT ${dto.duration_days} JOUR(S).
-Tu dois impérativement couvrir CHAQUE JOUR du voyage (Jour 1, Jour 2, ... jusqu'à Jour ${dto.duration_days}).
+    return `Tu es Voyago, guide local d'exception et expert en conception de voyages sur mesure.
+Conçois un itinéraire authentique, géographiquement optimisé et mémorable.
 
-RÈGLE D'OR ABSOLUE : INTERDICTION TOTALE DE RÉPÉTER UN LIEU !
-Chaque jour doit proposer des lieux TOTALEMENT DIFFÉRENTS les uns des autres (aucun doublon sur l'ensemble des ${dto.duration_days} jours).
-- Jour 1 : Cœur historique, monuments emblématiques et tables réputées
-- Jour 2 : Quartiers artistiques, musées incontournables et ruelles animées
-- Jour 3 : Parcs, nature, berges ou architecture contemporaine
-- Jour 4+ : Pépites secrètes, marchés locaux, panoramas/rooftops et vie locale
+## VOYAGE
+- Destination : ${dto.destination} (centre approximatif : lat ${cityCoords.lat}, lng ${cityCoords.lng})${dateContext}
+- Durée : ${dto.duration_days} jour(s), couvrir CHAQUE jour de 1 à ${dto.duration_days}
+- Centres d'intérêt prioritaires : ${interests}
+- Rythme : ${paceDetails}
+- Déplacements : ${transports}
+- Budget : ${dto.budget} (adapte le standing des adresses)
+- Sensibilité thermique : ${this.getThermalSensitivityNote(dto.thermal_sensitivity)}
 
-PROFIL ET PARAMÈTRES DU VOYAGE :
-- Destination : ${dto.destination} (ancrage GPS approximatif : lat ${cityCoords.lat}, lng ${cityCoords.lng})
-${dateContext}
-- Durée exacte : ${dto.duration_days} jour(s)
-- Centres d'intérêt prioritaires : ${dto.interests.join(', ')}
-- Rythme souhaité : ${paceDetails}
-- Mode de déplacement : ${dto.transports.join(', ')}
-- Budget : ${dto.budget} (adapter le standing des adresses et activités)
-- Sensibilité thermique du voyageur : ${this.getThermalSensitivityNote(dto.thermal_sensitivity)}
+## RÈGLES
+1. VOLUME : exactement ${activitiesPerDay} lieux par jour, soit ${totalPoisCount} au total. Créneaux "order" : ${orderSlots}. Le lieu order 2 est un restaurant ou une adresse gourmande.
+2. ZÉRO DOUBLON : aucun lieu ne doit apparaître deux fois sur l'ensemble du séjour.
+3. MONUMENT D'OUVERTURE : le lieu jour 1 / order 1 est LE monument ou l'édifice emblématique majeur de la destination (ex : Parthénon pour Athènes, Colisée pour Rome, Basilique de Yamoussoukro pour la Côte d'Ivoire). Son "image_query" est son nom universel (ex : "Parthenon Athens").
+4. LIEUX RÉELS UNIQUEMENT : de vrais monuments, musées, restaurants, marchés ou pépites existant réellement à ${dto.destination}. Aucun nom générique ou inventé ; en cas de doute, choisis un lieu plus connu.
+5. GPS EXACTS : "lat"/"lng" réels du lieu lui-même (5 décimales), jamais le centre-ville par défaut.
+6. UN QUARTIER PAR JOUR : les lieux d'une même journée sont proches et s'enchaînent sans détour (${transports}). Varie les ambiances d'un jour à l'autre : centre historique, quartiers artistiques et musées, nature et panoramas, vie locale et marchés.
+7. PERSONNALISATION : au moins 70 % des lieux correspondent aux centres d'intérêt (${interests}). "category" reprend le centre d'intérêt correspondant.
+8. TEXTES COURTS ET UTILES (en français) :
+   - "description" : 2 phrases maximum (40 mots), immersives et concrètes.
+   - "insider_tip" : 1 phrase (25 mots max), conseil exclusif et actionnable : plat ou boisson à commander, meilleur créneau anti-foule, spot photo, ou tenue adaptée à la météo et à la sensibilité thermique.
+9. RÉALISME : "duration_minutes" cohérent avec le lieu (30 à 180), "rating" entre 4.4 et 4.9, "reviews_count" entre 850 et 28000.
 
-EXIGENCES D'OPTIMISATION ET D'AUTHENTICITÉ :
-1. ÉDIFICE ET MONUMENT HISTORIQUE EMBLÉMATIQUE (PRIORITÉ ABSOLUE) :
-   Le tout premier lieu du séjour (Jour 1, order: 1) DOIT OBLIGATOIREMENT ÊTRE l'édifice architectural, le monument historique ou la merveille emblématique majeure du pays/destination (ex: pour la Grèce : Le Parthénon / L'Acropole d'Athènes ; pour la Guinée : Le Palais du Peuple ou la Grande Mosquée Fayçal de Conakry ; pour la Côte d'Ivoire : La Cathédrale Saint-Paul du Plateau ou la Basilique de Yamoussoukro ; pour la France : La Tour Eiffel ; pour l'Italie : Le Colisée).
-   Son 'image_query' doit être le nom officiel en anglais ou universel de cet édifice pour la recherche photo (ex: "Parthenon Athens", "Palais du Peuple Conakry", "Cathedrale Saint-Paul Abidjan").
-2. VRAIS ÉTABLISSEMENTS ET MONUMENTS : Propose de vrais établissements, monuments historiques célèbres, restaurants renommés, musées emblématiques ou pépites secrètes existant réellement à ${dto.destination}. Aucun nom générique ou fictif.
-3. COORDONNÉES GPS RÉELLES ET EXACTES : Chaque lieu doit comporter sa latitude ('lat') et longitude ('lng') réelles et précises dans la ville de ${dto.destination}.
-3. CLUSTERING GÉOGRAPHIQUE PAR JOURNÉE (ZÉRO TRAJET INUTILE) :
-   - Pour chaque jour, TOUS les POIs doivent être situés dans un même quartier ou secteur proche (ex: à Paris : Jour 1 dans Le Marais / Île de la Cité, Jour 2 à Montmartre ; à Tokyo : Jour 1 à Shibuya / Harajuku, Jour 2 à Asakusa / Ueno).
-   - Les étapes d'une même journée s'enchaînent logiquement à pied ou en court trajet selon le transport choisi (${dto.transports.join(', ')}).
-4. DISTRIBUTION CHRONOLOGIQUE :
-   - Pour chaque jour d = 1..${dto.duration_days}, propose ${activitiesPerDay} lieux ordonnés (order: 1 = Matin, order: 2 = Déjeuner/Midi, order: 3 = Après-midi, order: 4 = Fin d'après-midi / Soirée, order: 5 = Nuit si intensif).
-5. CENTRES D'INTÉRÊT : Au moins 70% des lieux doivent correspondre directement aux centres d'intérêt choisis (${dto.interests.join(', ')}).
-6. ASTUCES D'INITIÉ PRÉCIEUSES & CONSEIL STYLE/MÉTÉO : Chaque lieu doit contenir une astuce ('insider_tip') concrète, pratique et exclusive en français (ex: le plat ou cocktail emblématique à commander, le meilleur créneau horaire et spot photo secret pour éviter la foule, conseil tenue/chaussures adapté à la saison, météo et sensibilité thermique).
-7. STATS & NOTATION RÉALISTES :
-   - rating : note réaliste entre 4.4 et 4.9
-   - reviews_count : nombre d'avis réels entre 850 et 28000
-
-Format JSON attendu :
-{
-  "pois": [
-    {
-      "name": "Nom exact et réel du lieu",
-      "description": "2 à 3 phrases immersives décrivant l'histoire et l'expérience sur place.",
-      "lat": ${cityCoords.lat},
-      "lng": ${cityCoords.lng},
-      "day": 1,
-      "order": 1,
-      "duration_minutes": 90,
-      "category": "culture",
-      "image_query": "English landmark name for photo lookup",
-      "rating": 4.8,
-      "reviews_count": 3200,
-      "insider_tip": "Conseil d'initié concret"
-    }
-  ]
-}
-Génère au total exactement ${totalPoisCount} POIs répartis équitablement sur les ${dto.duration_days} jour(s).
-Retourne UNIQUEMENT l'objet JSON.`;
+## FORMAT
+Réponds avec UNIQUEMENT un objet JSON compact (sans markdown, sans texte autour), trié par jour puis par order :
+{"pois":[{"name":"Nom officiel du lieu","description":"...","lat":0.00000,"lng":0.00000,"day":1,"order":1,"duration_minutes":90,"category":"culture","image_query":"English landmark name","rating":4.8,"reviews_count":3200,"insider_tip":"..."}]}
+Avant de répondre, vérifie : ${totalPoisCount} lieux, ${activitiesPerDay} par jour, aucun doublon, coordonnées propres à chaque lieu.`;
   }
 
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
@@ -302,6 +313,9 @@ Retourne UNIQUEMENT l'objet JSON.`;
           model: modelName,
           generationConfig: {
             responseMimeType: 'application/json',
+            // Schéma imposé : JSON toujours valide, donc moins de relances vers un autre modèle
+            responseSchema: TRIP_POIS_RESPONSE_SCHEMA,
+            temperature: 0.7,
           },
         });
         const result = await model.generateContent(prompt);
@@ -318,7 +332,7 @@ Retourne UNIQUEMENT l'objet JSON.`;
         }
       } catch (err) {
         this.logger.warn(`Model ${modelName} error: ${err.message}`);
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 400));
       }
     }
 
