@@ -16,10 +16,11 @@ const XP_ACTIONS: Record<string, number> = {
   daily_login: 1,
   first_swipe: 1,
   review_place: 2,
+  share_journal: 5,
 };
 
 /** Actions attribuées uniquement par le serveur (jamais via POST /profile/xp). */
-export const SERVER_ONLY_XP_ACTIONS = ['review_place'];
+export const SERVER_ONLY_XP_ACTIONS = ['review_place', 'share_journal'];
 
 const ONE_TIME_ACTIONS = ['first_swipe', 'first_trip', 'complete_profile', 'select_interests', 'thermal_setup'];
 

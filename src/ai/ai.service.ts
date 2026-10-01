@@ -22,6 +22,7 @@ const POI_RESPONSE_SCHEMA: ResponseSchema = {
     rating: { type: SchemaType.NUMBER },
     reviews_count: { type: SchemaType.INTEGER },
     insider_tip: { type: SchemaType.STRING },
+    hidden_gem: { type: SchemaType.BOOLEAN },
   },
   required: ['name', 'description', 'lat', 'lng', 'day', 'order', 'category', 'image_query', 'insider_tip'],
 };
@@ -70,10 +71,11 @@ const POIS_JSON_SCHEMA = {
           rating: { type: 'number' },
           reviews_count: { type: 'integer' },
           insider_tip: { type: 'string' },
+          hidden_gem: { type: 'boolean' },
         },
         required: [
           'name', 'description', 'lat', 'lng', 'day', 'order', 'duration_minutes',
-          'category', 'image_query', 'rating', 'reviews_count', 'insider_tip',
+          'category', 'image_query', 'rating', 'reviews_count', 'insider_tip', 'hidden_gem',
         ],
         additionalProperties: false,
       },
@@ -344,7 +346,7 @@ Conçois un itinéraire authentique, géographiquement optimisé et mémorable.
 
 ## RÈGLES
 1. VOLUME : exactement ${activitiesPerDay} lieux par jour, soit ${totalPoisCount} au total. Créneaux "order" : ${orderSlots}. Le lieu order 2 est un restaurant ou une adresse gourmande.
-2. ZÉRO DOUBLON : aucun lieu ne doit apparaître deux fois sur l'ensemble du séjour.
+2. ZÉRO DOUBLON : aucun lieu ne doit apparaître deux fois sur l'ensemble du séjour. Chaque jour compte exactement 1 pépite secrète ("hidden_gem": true) : un lieu réel aimé des habitants, peu connu des touristes ; false pour tous les autres.
 3. MONUMENT D'OUVERTURE : le lieu jour 1 / order 1 est LE monument ou l'édifice emblématique majeur de la destination (ex : Parthénon pour Athènes, Colisée pour Rome, Basilique de Yamoussoukro pour la Côte d'Ivoire). Son "image_query" est son nom universel (ex : "Parthenon Athens").
 4. LIEUX RÉELS UNIQUEMENT : de vrais monuments, musées, restaurants, marchés ou pépites existant réellement à ${dto.destination}. Aucun nom générique ou inventé ; en cas de doute, choisis un lieu plus connu. "name" = nom officiel exact, tel qu'affiché sur Google Maps (sans ville ni description ajoutée).
 5. GPS EXACTS : "lat"/"lng" réels de l'entrée principale du lieu (5 décimales), jamais le centre-ville par défaut.
@@ -357,8 +359,8 @@ Conçois un itinéraire authentique, géographiquement optimisé et mémorable.
 
 ## FORMAT
 Réponds avec UNIQUEMENT un objet JSON compact (sans markdown, sans texte autour), trié par jour puis par order :
-{"pois":[{"name":"Nom officiel du lieu","description":"...","lat":0.00000,"lng":0.00000,"day":1,"order":1,"duration_minutes":90,"category":"culture","image_query":"English landmark name","rating":4.8,"reviews_count":3200,"insider_tip":"..."}]}
-Avant de répondre, vérifie : ${totalPoisCount} lieux, ${activitiesPerDay} par jour, aucun doublon, coordonnées propres à chaque lieu.`;
+{"pois":[{"name":"Nom officiel du lieu","description":"...","lat":0.00000,"lng":0.00000,"day":1,"order":1,"duration_minutes":90,"category":"culture","image_query":"English landmark name","rating":4.8,"reviews_count":3200,"insider_tip":"...","hidden_gem":false}]}
+Avant de répondre, vérifie : ${totalPoisCount} lieux, ${activitiesPerDay} par jour, 1 pépite par jour, aucun doublon, coordonnées propres à chaque lieu.`;
   }
 
   private async generateWithGemini(dto: GenerateTripDto): Promise<POI[]> {
@@ -510,6 +512,7 @@ Avant de répondre, vérifie : ${totalPoisCount} lieux, ${activitiesPerDay} par 
         rating: typeof p.rating === 'number' ? p.rating : 4.8,
         reviews_count: typeof p.reviews_count === 'number' ? p.reviews_count : 2400,
         insider_tip: p.insider_tip || `Conseil Voyago : arrivez tôt le matin pour savourer le lieu au calme.`,
+        hidden_gem: p.hidden_gem === true,
       };
     });
   }

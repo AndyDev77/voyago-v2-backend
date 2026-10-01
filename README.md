@@ -183,6 +183,12 @@ STRIPE_WEBHOOK_SECRET=whsec_your_stripe_webhook_secret
 | POST | `/api/notifications/arrival` | Arrivée sur un lieu de l'itinéraire (demande d'avis, une fois par lieu et par voyage) |
 | POST | `/api/notifications/:id/read` · `/api/notifications/read-all` | Marquer comme lu |
 | POST | `/api/places/reviews` | Noter (1-5★), liker et commenter un lieu visité (+2 XP au premier avis) |
+| GET | `/api/journal` | Journal de voyage : voyages passés avec stats (distance, lieux visités, coups de cœur, pépites, XP) et badge |
+| GET | `/api/journal/:tripId` | Carnet d'un voyage : jours, lieux, souvenirs, avis donnés, météo |
+| PUT | `/api/journal/:tripId/entries` | Souvenir d'un lieu (note, humeurs, visité) |
+| POST · DELETE | `/api/journal/:tripId/photos` · `/photos/:key` | Photos souvenirs (UploadThing, 6 max par lieu) |
+| POST | `/api/journal/:tripId/complete` · `/reopen` | Terminer un voyage (quitte la carte) / le remettre sur la carte |
+| POST | `/api/journal/:tripId/share` | Partager le journal à la communauté (+5 XP la première fois) |
 | POST | `/api/pro/checkout` | Créer session Stripe |
 | GET | `/api/pro/status/:session_id` | Statut paiement |
 | GET | `/api/pro/me` | Statut Pro |
