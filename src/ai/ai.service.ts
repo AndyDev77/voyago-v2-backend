@@ -34,6 +34,55 @@ const TRIP_POIS_RESPONSE_SCHEMA: ResponseSchema = {
   required: ['pois'],
 };
 
+/**
+ * Cascade Claude (identifiants actuels, sans suffixe de date).
+ * - Haiku 4.5 : rapide et économique, suffisant pour un itinéraire structuré.
+ * - Sonnet 5.5 : relais plus capable ; thinking toujours actif sur ce modèle,
+ *   on le garde léger avec effort "low" pour limiter latence et coût.
+ */
+const CLAUDE_MODELS: { id: string; effort?: 'low' | 'medium' | 'high'; extraTokens: number }[] = [
+  { id: 'claude-haiku-4-5', extraTokens: 0 },
+  { id: 'claude-sonnet-5-5', effort: 'low', extraTokens: 8000 },
+];
+
+/** Estimation de la sortie : ~350 tokens par lieu (description + astuce en français) + marge. */
+const TOKENS_PER_POI = 350;
+const CLAUDE_MAX_OUTPUT = 64000;
+
+/** Schéma imposé à Claude (structured outputs) : JSON toujours valide et complet. */
+const POIS_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    pois: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          description: { type: 'string' },
+          lat: { type: 'number' },
+          lng: { type: 'number' },
+          day: { type: 'integer' },
+          order: { type: 'integer' },
+          duration_minutes: { type: 'integer' },
+          category: { type: 'string' },
+          image_query: { type: 'string' },
+          rating: { type: 'number' },
+          reviews_count: { type: 'integer' },
+          insider_tip: { type: 'string' },
+        },
+        required: [
+          'name', 'description', 'lat', 'lng', 'day', 'order', 'duration_minutes',
+          'category', 'image_query', 'rating', 'reviews_count', 'insider_tip',
+        ],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['pois'],
+  additionalProperties: false,
+};
+
 const WEATHER_CODE_MAP: Record<number, { icon: string; summary: string }> = {
   0: { icon: '☀️', summary: 'Ensoleillé' },
   1: { icon: '⛅', summary: 'Nuageux' },
@@ -87,22 +136,33 @@ export class AiService {
       this.logger.log('Gemini AI client initialized successfully');
     }
 
+    // Moteur IA principal : "gemini" (défaut, offre gratuite) ou "claude" (API payante).
+    // Claude reste dans le code, prêt à être réactivé via AI_PROVIDER=claude dans le .env.
+    const provider = (this.configService.get<string>('AI_PROVIDER') || 'gemini').trim().toLowerCase();
+    this.logger.log(`AI provider: ${provider}`);
+
     const anthropicKey =
       this.configService.get<string>('ANTHROPIC_API_KEY') ||
       this.configService.get<string>('CLAUDE_CODE_OAUTH_TOKEN');
 
-    if (anthropicKey && anthropicKey.trim().length > 0) {
+    if (provider === 'claude' && anthropicKey && anthropicKey.trim().length > 0) {
       const cleanKey = anthropicKey.trim();
       try {
         if (cleanKey.startsWith('sk-ant-oat')) {
           this.anthropic = new Anthropic({
-            apiKey: null as any,
+            apiKey: null,
             authToken: cleanKey,
+            maxRetries: 3,
           });
-          this.logger.log('Anthropic Claude client initialized with OAuth Token (Bearer auth)');
+          this.logger.warn(
+            "Anthropic : jeton OAuth d'abonnement détecté (sk-ant-oat). Il est soumis aux quotas de l'abonnement " +
+              '(erreurs 429 fréquentes). Utilise une clé API Console (sk-ant-api…) dans ANTHROPIC_API_KEY pour un backend.',
+          );
         } else {
           this.anthropic = new Anthropic({
             apiKey: cleanKey,
+            // Le SDK réessaie seul les 429 / 5xx en respectant l'en-tête retry-after
+            maxRetries: 3,
           });
           this.logger.log('Anthropic Claude client initialized with API Key');
         }
@@ -113,7 +173,7 @@ export class AiService {
   }
 
   async generatePois(dto: GenerateTripDto): Promise<POI[]> {
-    // 1. Try Claude first if configured (Voyago Core AI Engine)
+    // 1. Claude, uniquement si AI_PROVIDER=claude (client non créé sinon)
     if (this.anthropic) {
       try {
         return await this.generateWithClaude(dto);
@@ -340,41 +400,75 @@ Avant de répondre, vérifie : ${totalPoisCount} lieux, ${activitiesPerDay} par 
   }
 
   private async generateWithClaude(dto: GenerateTripDto): Promise<POI[]> {
-    const modelsToTry = [
-      'claude-haiku-4-5-20251001',
-      'claude-sonnet-4-6',
-      'claude-sonnet-4-5-20250929',
-      'claude-sonnet-5',
-      'claude-3-5-sonnet-20241022',
-      'claude-3-5-haiku-20241022',
-    ];
-
     const cityCoords = await this.resolveDestinationCoordinates(dto.destination);
     const prompt = this.buildOptimizedTripPrompt(dto, cityCoords);
 
-    for (const model of modelsToTry) {
+    const activitiesPerDay = dto.pace === 'tranquille' ? 3 : dto.pace === 'intensif' ? 5 : 4;
+    const expectedPois = dto.duration_days * activitiesPerDay;
+    const baseMaxTokens = Math.max(8000, expectedPois * TOKENS_PER_POI + 2000);
+
+    for (const { id: model, effort, extraTokens } of CLAUDE_MODELS) {
+      const maxTokens = Math.min(CLAUDE_MAX_OUTPUT, baseMaxTokens + extraTokens);
+      const startedAt = Date.now();
       try {
-        this.logger.log(`Attempting trip generation with Claude model: ${model}`);
-        const message = await this.anthropic!.messages.create({
-          model,
-          max_tokens: 4096,
-          messages: [{ role: 'user', content: prompt }],
-        });
+        this.logger.log(`Attempting trip generation with Claude model: ${model} (max_tokens ${maxTokens}, ${expectedPois} POIs attendus)`);
 
-        const content = message.content[0];
-        if (content.type !== 'text') continue;
+        // Streaming : évite les timeouts HTTP sur les longues réponses (voyages de 10+ jours).
+        // Structured outputs : la réponse respecte POIS_JSON_SCHEMA, plus de JSON tronqué ou invalide.
+        const message = await this.anthropic!.messages
+          .stream({
+            model,
+            max_tokens: maxTokens,
+            messages: [{ role: 'user', content: prompt }],
+            output_config: {
+              format: { type: 'json_schema', schema: POIS_JSON_SCHEMA },
+              ...(effort ? { effort } : {}),
+            },
+          })
+          .finalMessage();
 
-        let jsonText = content.text.trim();
-        if (jsonText.startsWith('```')) {
-          jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+        if (message.stop_reason === 'refusal') {
+          this.logger.warn(`Claude model ${model} declined the request (refusal)`);
+          continue;
+        }
+        if (message.stop_reason === 'max_tokens') {
+          // Ne devrait plus arriver avec l'estimation ci-dessus : on passe au modèle suivant plutôt que parser un JSON coupé
+          this.logger.warn(`Claude model ${model} hit max_tokens (${maxTokens}), trying next model`);
+          continue;
         }
 
-        const parsed = JSON.parse(jsonText);
-        if (parsed.pois && Array.isArray(parsed.pois) && parsed.pois.length > 0) {
+        // Sur Sonnet 5.5 le premier bloc peut être un bloc "thinking" : on cherche le bloc texte
+        const textBlock = message.content.find((b): b is Anthropic.TextBlock => b.type === 'text');
+        if (!textBlock) {
+          this.logger.warn(`Claude model ${model} returned no text block`);
+          continue;
+        }
+
+        const parsed = JSON.parse(textBlock.text) as { pois?: unknown[] };
+        if (Array.isArray(parsed.pois) && parsed.pois.length > 0) {
+          this.logger.log(
+            `Claude model ${model} generated ${parsed.pois.length} POIs in ${((Date.now() - startedAt) / 1000).toFixed(1)}s ` +
+              `(${message.usage.output_tokens} output tokens)`,
+          );
           return this.sanitizePois(parsed.pois, dto, cityCoords);
         }
+        this.logger.warn(`Claude model ${model} returned an empty POI list`);
       } catch (err) {
-        this.logger.warn(`Claude model ${model} error: ${err.message}`);
+        if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
+          // Inutile d'essayer les autres modèles avec la même clé : on bascule directement sur Gemini
+          throw new Error(`Anthropic credentials rejected (${err.status}): ${err.message}`);
+        }
+        if (err instanceof Anthropic.NotFoundError) {
+          this.logger.warn(`Claude model ${model} unavailable for this account (404)`);
+        } else if (err instanceof Anthropic.RateLimitError) {
+          this.logger.warn(`Claude model ${model} still rate limited after retries (429)`);
+        } else if (err instanceof Anthropic.APIError) {
+          this.logger.warn(`Claude model ${model} API error ${err.status}: ${err.message}`);
+        } else if (err instanceof SyntaxError) {
+          this.logger.warn(`Claude model ${model} returned invalid JSON: ${err.message}`);
+        } else {
+          this.logger.warn(`Claude model ${model} error: ${(err as Error).message}`);
+        }
       }
     }
 
